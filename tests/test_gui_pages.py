@@ -175,9 +175,11 @@ def test_settings_page_save_round_trips_values(ctx):
     assert ctx.app.observe_only is True
 
 
-def test_calibration_page_lists_missing_templates(ctx):
-    page = CalibrationPage(ctx)
-    assert page.list.count() > 0  # nothing captured yet in a fresh checkout
+def test_calibration_page_builds_both_tabs(ctx, tmp_path):
+    # Full wizard/gallery behavior is covered in tests/test_gui_calibration.py.
+    page = CalibrationPage(ctx, templates_root=tmp_path)
+    assert page.screen_combo.count() > 0
+    assert page.canvas is not None and page.gallery_canvas is not None
 
 
 def test_history_page_records_transitions_from_bus(ctx):

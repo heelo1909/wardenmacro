@@ -213,3 +213,11 @@ detectors:
     roi: [0.25, 0.25, 0.75, 0.75]
     ocr: { contains: [IDLE, "20 MINUTES"] }
     confirm_frames: 1
+  contract_progress:
+    # Reads the game's own playtime/progress readout (opportunistically, while
+    # safely in the lobby) to correct the estimate - section 8.1. Uncalibrated
+    # placeholder ROI; run Calibration to match your own screen.
+    method: ocr
+    roi: [0.0, 0.55, 0.15, 0.65]
+    ocr: { contains: [] }
+    confirm_frames: 1

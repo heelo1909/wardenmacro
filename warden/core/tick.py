@@ -20,6 +20,7 @@ from warden.core.events import EventBus
 from warden.core.state_machine import Signals, State, StateMachine, Transition
 from warden.core.persistence import PersistenceManager
 from warden.core.scheduler import Scheduler, ShutdownCountdown, power_action
+from warden.flows.calibration import parse_contract_hours
 from warden.flows.loadout import LoadoutTransaction
 from warden.flows.recovery import RecoverySequence
 from warden.geometry import Rect
@@ -367,8 +368,26 @@ class TickLoop:
             client_window_exists=client is not None, process_running=process_running,
         )
         result_state = self.sm.tick(signals)
+        self._maybe_verify_contract(detections, result_state)
         self._bookkeep(result_state)
         return result_state
+
+    def _maybe_verify_contract(self, detections: dict, result_state: State) -> None:
+        """Opportunistically OCR the game's own progress counter while
+        safely in the lobby, and correct the banked estimate (HANDOFF 8.1).
+        """
+        if not (self._session_active and self.app.estimate.ocr_verify and result_state is State.LOBBY):
+            return
+        det = detections.get("contract_progress")
+        if det is None or not det.text:
+            return
+        hours = parse_contract_hours(det.text)
+        if hours is None:
+            return
+        self.persistence.verify_contract_hours(self.app.active_preset, self.preset.contract.label,
+                                               self.preset.contract.target_hours, hours)
+        self._in_match_seconds = 0.0
+        self.bus.emit("contract.verified", f"contract progress verified via OCR: {hours:.2f}h", level="success")
 
     def _bookkeep(self, result_state: State, now: float | None = None) -> None:
         """Credited-time tracking + persistence flush + scheduler check - split
@@ -455,9 +474,18 @@ class TickLoop:
         must never join self._thread (that would be the thread joining itself).
         """
         self.bus.emit("schedule.stop", f"stopping: {reason}", level="warn")
+        target_reached = reason.startswith("target reached")
         self.sm.stop()
         self._stop.set()
         self._finalize_session()
+        if target_reached:
+            # Section 8.11 contract queue: let whoever owns preset-switching
+            # (AppContext) decide whether to advance and restart - TickLoop
+            # itself only has its own single preset, not the whole queue. If
+            # it does advance, it's responsible for cancelling the countdown
+            # started just below (cancel_shutdown_countdown()).
+            self.bus.emit("schedule.target_reached", f"target reached for '{self.app.active_preset}'",
+                          level="success", preset_id=self.app.active_preset)
         if self.app.scheduler.after_stop != "nothing":
             self._countdown = ShutdownCountdown(
                 seconds=self.app.scheduler.countdown_s,

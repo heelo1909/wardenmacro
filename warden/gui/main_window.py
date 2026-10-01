@@ -50,7 +50,7 @@ class MainWindow(QMainWindow):
         self._incidents: list[str] = []
         self._hotkeys: Hotkeys | None = None
         self.mini_overlay: MiniOverlay | None = None
-        self._incident_bridge: BusBridge | None = None
+        self._event_bridge: BusBridge | None = None
 
         root = QWidget(objectName="Root")
         row = QHBoxLayout(root)
@@ -82,8 +82,8 @@ class MainWindow(QMainWindow):
                 "Diagnostics": DiagnosticsPage(self.ctx),
             }
             self.home_page: HomePage | None = pages["Home"]
-            self._incident_bridge = BusBridge(self.ctx.bus, min_level="warn")
-            self._incident_bridge.event.connect(self._on_possible_incident)
+            self._event_bridge = BusBridge(self.ctx.bus, min_level="info")
+            self._event_bridge.event.connect(self._on_bus_event)
             self.mini_overlay = MiniOverlay(self.ctx)
         else:
             pages = {name: _placeholder_page(name) for name in PAGES}
@@ -201,9 +201,27 @@ class MainWindow(QMainWindow):
         except Exception:
             log.exception("screenshot failed")
 
-    def _on_possible_incident(self, event: Event) -> None:
+    def _on_bus_event(self, event: Event) -> None:
         if event.topic == "incident":
             self._incidents.append(event.message)
+        elif event.topic == "schedule.target_reached":
+            self._handle_target_reached(event.data.get("preset_id"))
+
+    def _handle_target_reached(self, preset_id: str | None) -> None:
+        """Contract queue (HANDOFF §8.11): advance to the next preset and keep going."""
+        if self.ctx is None or preset_id != self.ctx.preset_id:
+            return
+        if not self.ctx.advance_contract_queue():
+            return
+        self.ctx.bus.emit("schedule.queue_advanced", f"contract queue: advancing to '{self.ctx.preset_id}'",
+                          level="success")
+        if self.ctx.tick_loop is not None:
+            self.ctx.tick_loop.cancel_shutdown_countdown()
+        if self.home_page is not None:
+            self.home_page._refresh_loadout_card()
+            self.home_page._refresh_contract_label()
+            self.home_page._refresh_resume_banner()
+        self._start()
 
 
 def _placeholder_page(title: str) -> QWidget:

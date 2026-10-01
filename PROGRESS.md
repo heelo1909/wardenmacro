@@ -2,11 +2,11 @@
 
 ## Current phase
 
-**Phase 7 — Integrations: COMPLETE.**
+**Phase 8 — Calibration, unknown gallery, diagnostics, extras: COMPLETE.**
 Running autonomously through all phases per HANDOFF.md section 0's original
 instruction (user said "continue all phases without me", away at squash),
 stopping only for a live-Roblox-test DoD item or a genuine blocker.
-Next: Phase 8 — Calibration, unknown gallery, diagnostics, extras.
+Next: Phase 9 — Packaging & docs (the last one).
 
 **⚠️ Incident during Phase 5 (2026-10-01), already handled - see "Decisions"
 #29/#30 and `warden-testing-safety` memory:** a manual GUI smoke test briefly
@@ -80,9 +80,15 @@ two test files that were accidentally writing to the real checked-in
 - [x] `pytest` runs green (299 tests)
 
 ### Phase 8 — Calibration, unknown gallery, diagnostics, extras
-- [ ] Calibration wizard can capture a template, sample an HSV range, and show live detections in under a minute per screen
-- [ ] Unknown gallery → "make template" flow
-- [ ] Diagnostics page complete; contract OCR verification and contract queue working
+- [x] Calibration wizard can capture a template, sample an HSV range, and show live detections in under a minute per screen — `warden/gui/pages/calibration.py` (real wizard, not the Phase 5 stub): capture live or load an image, drag a selection (`gui/widgets.py`'s `ImageCanvas`), save as template / sample HSV / set ROI / run detection, each one or two clicks
+- [x] Unknown gallery → "make template" flow — second tab on the same page, lists `diagnostics/unknown/*.png`, drag a region, pick a detector name, save
+- [x] Diagnostics page complete (Phase 5); contract OCR verification and contract queue working — `warden/flows/calibration.py` (`parse_contract_hours`), `core/persistence.py` (`verify_contract_hours`), `core/tick.py` (`_maybe_verify_contract`, opportunistic while safely in LOBBY); `gui/context.py` (`advance_contract_queue`), `core/tick.py` emits `schedule.target_reached`, `MainWindow` advances and restarts
+- [x] `pytest` runs green (341 tests)
+
+### Phase 9 — Packaging & docs
+- [ ] PyInstaller one-folder build runs on a clean Windows machine
+- [ ] README: install, Tesseract (optional), first-run calibration walkthrough, public vs share-link note, Discord setup, troubleshooting, and a clear note that automating play is against Roblox's rules and can get the account banned — test on an alt
+- [ ] No gameplay-specific values hardcoded anywhere; everything lives in config/presets
 
 ---
 
@@ -151,6 +157,11 @@ since you may want to try it earlier.
 38. **LAN dashboard safety:** `LanDashboardServer.__init__` refuses (raises `ValueError`, caught by `TickLoop`) to bind anywhere that isn't a private/loopback address (`is_lan_only_bind`), and `ensure_pin()` auto-generates a 6-digit PIN rather than ever running the control endpoints (`/api/pause`, `/api/resume`, `/api/stop`) unprotected - `/api/status` alone is readable without a PIN (matches "live stats + thumbnail" being the point of a phone dashboard).
 39. **Known gap:** the webhook's periodic status embed doesn't attach a screenshot yet (`DiscordWebhookConfig.include_screenshot` exists in the schema but isn't read) - `TickLoop` has the last captured frame available (`self.actions.detections.get("_last_frame")`) and `discord_webhook.py`'s `_send`/`_default_poster` would need a multipart upload path (`requests`' `files=` parameter) instead of the current pure-JSON POST. Small, well-scoped follow-up; flagging rather than rushing it in.
 40. Discord bot command dispatch (`BotCommands`) is fully tested; the `discord.py` client/slash-command glue around it (`DiscordBotRunner.build_client`/`run`) is deliberately thin and untested, since exercising it needs a real bot token and gateway connection - not something to fake convincingly, and the actual decision logic it delegates to is where the real risk of bugs lives anyway.
+41. **Calibration (Phase 8)** backend logic lives in `flows/calibration.py` (pure, Qt-free: ROI/HSV helpers, unknown-gallery template-making, contract-hours text parsing) with a thin GUI page on top, same split as every other flow. `gui/widgets.py`'s `ImageCanvas` tracks the drag-selection in *original frame pixels* (not display pixels), so it stays correct regardless of how the captured frame is scaled to fit the widget.
+42. **Contract OCR verification** overwrites (not adds to) the banked total for that preset the moment a parseable readout is seen while safely in LOBBY (`PersistenceManager.verify_contract_hours`) - the game's own counter is taken as authoritative over the estimate. It resets both `PersistenceManager`'s internal delta baseline and `TickLoop._in_match_seconds` to 0 together (the docstring on `verify_contract_hours` spells out why both must move together, or the next flush would re-add the pre-verification session time on top).
+43. **Contract queue** ownership split: `TickLoop` only knows its own single preset, so it just emits `schedule.target_reached` (distinct from the generic `schedule.stop`) when the stop reason is specifically target-reached - not for a clock-time or run-window stop. `AppContext.advance_contract_queue()` (new) decides whether to actually continue, and `MainWindow._handle_target_reached` restarts the session for the next preset if so, cancelling the just-started shutdown/sleep countdown (`TickLoop.cancel_shutdown_countdown()`) since the point of a queue is to keep going, not power off.
+44. A GUI test crashed the test process **silently** (no Python traceback, just a bare process exit) the first time `ImageCanvas` (a `QWidget` subclass) was instantiated in a test that didn't request the module-scoped `qapp` fixture - constructing any `QWidget` before a `QApplication` exists is a native-level crash in Qt, not a catchable Python exception. Every GUI test file already threads a `qapp` fixture through for this reason; the lesson is to double check *every* test that touches a widget requests it, not just the file's "main" ones.
+45. **Another real-file-write incident, same family as Phase 5's (see `warden-testing-safety` memory):** `CalibrationPage`'s template-saving paths use `TemplateLibrary(paths.repo_root())` - correct for the real app (templates should live alongside the installed code), but `paths.repo_root()` is **not** affected by the `WARDEN_HOME` env var or a temp config copy, so a GUI test exercising a save path would write into the actual checked-in `templates/` folder. Found a stray `templates/lobby_play.png` had been created this way; deleted it (confirmed via `git status` it was newly added, not prior content) and fixed the root cause: `CalibrationPage.__init__` now takes an injectable `templates_root` parameter (defaults to `paths.repo_root()` for real use), and every calibration GUI test passes `templates_root=tmp_path`. General lesson carried forward: any path built from `paths.repo_root()` (as opposed to `paths.data_home()`, which `WARDEN_HOME` already isolates) needs its own explicit test-isolation story - check for this pattern before writing tests for anything new that touches the repo's own `templates/`/`config/` folders.
 2. Virtualenv at `.venv/` (git-ignored). Run with `.venv\Scripts\python -m warden`.
 3. Config split: **app config** (machine settings, detectors) vs **preset** (per-contract). Effective config = app + `active_preset`. Matches the preset example in HANDOFF §9.
 4. Config module lives at `warden/config/` (not in HANDOFF's layout; needed somewhere).
@@ -175,17 +186,22 @@ since you may want to try it earlier.
 
 ## Exact next step
 
-Start Phase 8: the Calibration wizard (replacing `gui/pages/calibration.py`'s current
-"missing templates" stub) - step through each screen a detector needs (lobby, mode list, FFA
-tile, in match, death, picker, switch weapons, results, disconnect) per HANDOFF §7.4: capture a
-region as a template (`vision/templates.py`'s `TemplateLibrary.save` already exists), click/drag
-to sample an HSV range (`vision/color.py`'s `sample_hsv` already exists), adjust the ROI, and a
-live detection overlay (boxes + confidence) using the real `Detector`/`FrozenDetector` classes
-against a live or recorded frame. A "test click" button and a coordinate picker that outputs
-client-area fractions. Then the unknown-screen gallery (every unknown frame is already saved by
-`LiveActions.save_unknown_frame` - Phase 8 adds the "turn a region into a new template" flow on
-top of what's already on disk). Diagnostics page is functionally complete (Phase 5/1); this
-phase adds contract OCR verification (`vision/ocr.py` already exists; opportunistically read the
-real contract progress while safely in the lobby during recovery, per `estimate.ocr_verify`) and
-the contract queue (`AppConfig.contract_queue` already exists in the schema - chain presets with
-their own target hours, each `TickLoop` session advancing to the next on completion).
+Start Phase 9 (the last one): packaging and docs.
+1. PyInstaller one-folder build (`pyproject.toml`'s `dev` extra already includes `pyinstaller`) -
+   write a `.spec` (or a plain `pyinstaller` invocation) that bundles `warden/`, `config/`
+   (defaults), and any Lucide/MIT icon assets used; verify it runs on a clean checkout (no `.venv`
+   dev dependencies beyond what's declared) - this is the one DoD item that benefits from an
+   actual clean-machine test, though not a *live Roblox* one, so it doesn't need to wait for the
+   user.
+2. README.md: install steps, optional Tesseract setup (OCR features degrade gracefully without
+   it - already true in `vision/ocr.py`), a first-run Calibration walkthrough (screenshot or
+   plain steps using the Phase 8 wizard), the public-vs-share_link warning (already in HANDOFF
+   §2/§6.6 and the Settings page - make sure the README repeats it prominently), Discord webhook/
+   bot setup steps, troubleshooting (Diagnostics page, common config errors), and the required
+   note that automating play is against Roblox's rules and can get the account banned - test on
+   an alt (HANDOFF §9's exact wording).
+3. Final sweep for hardcoded gameplay-specific values - everything should already live in
+   `config/default.yaml` or `config/presets/*.yaml` (placeholders throughout, never baked into
+   Python code), but worth one pass over `warden/` to confirm nothing slipped through.
+4. Clean-room check (HANDOFF §1): re-read the whole codebase's naming, log messages, and the
+   Lucide icon licensing note once real icons are chosen for packaging.

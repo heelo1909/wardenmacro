@@ -106,6 +106,25 @@ def test_contract_progress_accumulates_across_multiple_sessions_same_preset(tmp_
     assert mgr.state.all_time.total_sessions == 2
 
 
+def test_verify_contract_hours_overwrites_cumulative_and_resets_baseline(tmp_path):
+    mgr = PersistenceManager(tmp_path / "state.json", tmp_path / "sessions")
+    mgr.start_session("glass_wrap", "Glass Wrap", 24.0)
+    mgr.maybe_flush(3600.0, Counters(), force=True)  # 1h banked from in-session tracking
+    mgr.verify_contract_hours("glass_wrap", "Glass Wrap", 24.0, 12.5)  # OCR says the truth is 12.5h
+    assert mgr.state.contracts["glass_wrap"].cumulative_seconds == 12.5 * 3600.0
+    # The caller (TickLoop) resets its own elapsed-seconds counter to 0 at the
+    # same moment, so the next flush's in_match_s is "seconds since the
+    # reset" - here, 60s of genuinely new progress - not the old running total.
+    mgr.maybe_flush(60.0, Counters(), force=True)
+    assert mgr.state.contracts["glass_wrap"].cumulative_seconds == 12.5 * 3600.0 + 60.0
+
+
+def test_verify_contract_hours_creates_entry_if_absent(tmp_path):
+    mgr = PersistenceManager(tmp_path / "state.json", tmp_path / "sessions")
+    mgr.verify_contract_hours("new_preset", "New", 10.0, 3.0)
+    assert mgr.state.contracts["new_preset"].cumulative_seconds == 3.0 * 3600.0
+
+
 def test_contract_progress_fraction_clamped_at_one():
     from warden.core.persistence import ContractProgress
 

@@ -171,6 +171,22 @@ class PersistenceManager:
         save_state(self.state_path, self.state)
         self._last_flush_monotonic = self.clock()
 
+    def verify_contract_hours(self, preset_id: str, label: str, target_hours: float, verified_hours: float) -> None:
+        """Correct the banked total from an OCR read of the game's own counter
+        (section 8.1). Resets this manager's own delta baseline to match - the
+        caller must also reset its own elapsed-seconds tracker to 0, or the
+        next flush would re-add the pre-verification session time on top.
+        """
+        entry = self.state.contracts.get(preset_id)
+        if entry is None:
+            entry = ContractProgress(label=label, target_hours=target_hours)
+            self.state.contracts[preset_id] = entry
+        entry.label = label
+        entry.target_hours = target_hours
+        entry.cumulative_seconds = max(verified_hours, 0.0) * 3600.0
+        self._last_in_match_s = 0.0
+        save_state(self.state_path, self.state)
+
     def maybe_flush(self, in_match_s: float, counters: Counters, force: bool = False) -> bool:
         now = self.clock()
         if not force and now - self._last_flush_monotonic < self.save_interval_s:

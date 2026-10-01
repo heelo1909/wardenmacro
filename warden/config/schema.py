@@ -138,6 +138,7 @@ DETECTOR_NAMES = (
     "roblox_updating",
     "frozen",
     "idle_warning",
+    "contract_progress",
 )
 
 

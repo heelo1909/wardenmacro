@@ -86,3 +86,19 @@ class AppContext:
         """Cumulative hours already credited to a contract from past sessions."""
         entry = self.persisted_state().contracts.get(preset_id or self.preset_id)
         return entry.cumulative_hours if entry else 0.0
+
+    def next_in_contract_queue(self) -> str | None:
+        """The preset after the active one in ``contract_queue``, if any (HANDOFF §8.11)."""
+        queue = self.app.contract_queue
+        if self.preset_id not in queue:
+            return None
+        i = queue.index(self.preset_id)
+        return queue[i + 1] if i + 1 < len(queue) else None
+
+    def advance_contract_queue(self) -> bool:
+        """Switch to the next preset in the queue. Returns False if there isn't one."""
+        nxt = self.next_in_contract_queue()
+        if nxt is None:
+            return False
+        self.set_active_preset(nxt)
+        return True
