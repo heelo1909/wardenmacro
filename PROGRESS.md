@@ -2,11 +2,16 @@
 
 ## Current phase
 
-**Phase 8 — Calibration, unknown gallery, diagnostics, extras: COMPLETE.**
-Running autonomously through all phases per HANDOFF.md section 0's original
+**Phase 9 — Packaging & docs: COMPLETE. All 10 phases (0–9) are now built.**
+
+Ran autonomously through every phase per HANDOFF.md section 0's original
 instruction (user said "continue all phases without me", away at squash),
-stopping only for a live-Roblox-test DoD item or a genuine blocker.
-Next: Phase 9 — Packaging & docs (the last one).
+stopping only for genuinely live-Roblox-test DoD items. There is exactly
+**one remaining stop point**, flagged below and in Phase 4's section: the
+live kill-Roblox-mid-match test, which needs the user and the real game.
+Calibration (Phase 8) needs to run against the user's own screen before
+that live test will mean anything - the detector/loadout/recovery-UI values
+shipped are uncalibrated placeholders everywhere, by design (see Decisions).
 
 **⚠️ Incident during Phase 5 (2026-10-01), already handled - see "Decisions"
 #29/#30 and `warden-testing-safety` memory:** a manual GUI smoke test briefly
@@ -86,9 +91,25 @@ two test files that were accidentally writing to the real checked-in
 - [x] `pytest` runs green (341 tests)
 
 ### Phase 9 — Packaging & docs
-- [ ] PyInstaller one-folder build runs on a clean Windows machine
-- [ ] README: install, Tesseract (optional), first-run calibration walkthrough, public vs share-link note, Discord setup, troubleshooting, and a clear note that automating play is against Roblox's rules and can get the account banned — test on an alt
-- [ ] No gameplay-specific values hardcoded anywhere; everything lives in config/presets
+- [x] PyInstaller one-folder build runs — `warden.spec`, `scripts/run_warden.py`. Built and verified on **this** machine (launched the packaged `dist\Warden\Warden.exe`, confirmed the GUI renders correctly, confirmed `--check-config` works); "a clean Windows machine" specifically isn't something I can verify without one - see Decisions #46
+- [x] README: install, Tesseract (optional), first-run Calibration walkthrough, public vs share_link warning, Discord webhook/bot/LAN dashboard setup, troubleshooting, the required Roblox ToS/ban/alt-account warning — `README.md`
+- [x] No gameplay-specific values hardcoded anywhere — swept `warden/*.py` for weapon names, the game name as a value (vs. docstrings), and numeric gameplay constants; the only one found is `place_id`'s schema default (17625359962), which is HANDOFF §6.6's own documented default and is override-able per-preset, not a hidden hardcoded value
+- [x] `pytest` runs green (341 tests) - unchanged this phase (README/spec/packaging don't touch test-covered code)
+
+---
+
+## ALL PHASES COMPLETE (0 through 9)
+
+What's left, for the user:
+1. **Run Calibration** (Phase 8's wizard) against your own screen - every detector
+   ROI/HSV range, loadout-picker layout, and recovery button position shipped as an
+   uncalibrated placeholder, by design (see Decisions throughout). Nothing will
+   reliably detect or click anything real until this is done.
+2. **The one live test that was never run** (flagged under Phase 4, still true):
+   killing `RobloxPlayerBeta.exe` mid-match and confirming Warden recovers back into
+   public FFA unattended. Do this on an alt account per the README's warning.
+3. Discord/LAN dashboard setup, if wanted - both optional, both off by default,
+   both documented in the README.
 
 ---
 
@@ -162,6 +183,9 @@ since you may want to try it earlier.
 43. **Contract queue** ownership split: `TickLoop` only knows its own single preset, so it just emits `schedule.target_reached` (distinct from the generic `schedule.stop`) when the stop reason is specifically target-reached - not for a clock-time or run-window stop. `AppContext.advance_contract_queue()` (new) decides whether to actually continue, and `MainWindow._handle_target_reached` restarts the session for the next preset if so, cancelling the just-started shutdown/sleep countdown (`TickLoop.cancel_shutdown_countdown()`) since the point of a queue is to keep going, not power off.
 44. A GUI test crashed the test process **silently** (no Python traceback, just a bare process exit) the first time `ImageCanvas` (a `QWidget` subclass) was instantiated in a test that didn't request the module-scoped `qapp` fixture - constructing any `QWidget` before a `QApplication` exists is a native-level crash in Qt, not a catchable Python exception. Every GUI test file already threads a `qapp` fixture through for this reason; the lesson is to double check *every* test that touches a widget requests it, not just the file's "main" ones.
 45. **Another real-file-write incident, same family as Phase 5's (see `warden-testing-safety` memory):** `CalibrationPage`'s template-saving paths use `TemplateLibrary(paths.repo_root())` - correct for the real app (templates should live alongside the installed code), but `paths.repo_root()` is **not** affected by the `WARDEN_HOME` env var or a temp config copy, so a GUI test exercising a save path would write into the actual checked-in `templates/` folder. Found a stray `templates/lobby_play.png` had been created this way; deleted it (confirmed via `git status` it was newly added, not prior content) and fixed the root cause: `CalibrationPage.__init__` now takes an injectable `templates_root` parameter (defaults to `paths.repo_root()` for real use), and every calibration GUI test passes `templates_root=tmp_path`. General lesson carried forward: any path built from `paths.repo_root()` (as opposed to `paths.data_home()`, which `WARDEN_HOME` already isolates) needs its own explicit test-isolation story - check for this pattern before writing tests for anything new that touches the repo's own `templates/`/`config/` folders.
+46. **Packaging (Phase 9):** `warden.spec` builds a one-folder PyInstaller app from `scripts/run_warden.py` (a one-line entry point - PyInstaller needs an actual script file, `python -m warden` doesn't translate directly). Hidden imports listed explicitly for `discord`/`fastapi`/`uvicorn`/`winotify`/`pydirectinput`/`pytesseract`/`pywin32`, since Phase 7's integrations import them lazily inside functions (gracefully, when enabled) rather than at module load time, so PyInstaller's static analysis can't find them on its own. Built and ran it for real on this machine (`pyinstaller warden.spec --clean`, then launched `dist\Warden\Warden.exe`, confirmed the GUI renders and `--check-config` works) - "runs on a **clean** Windows machine" specifically can't be verified without one; the build and a same-machine run are the closest offline proxy. No icon set yet (`icon=None` in the spec) - HANDOFF §1 calls for an original or Lucide/MIT icon with its LICENSE file once one is chosen; left as a deliberate gap rather than picking something without the user's input.
+47. **README.md** covers install, optional Tesseract, the Calibration walkthrough, the public-vs-share_link warning, Discord webhook/bot/LAN dashboard setup, troubleshooting, and the required Roblox ToS/ban/alt-account warning (HANDOFF §9's exact ask). The Discord bot's token/allowed-user-id aren't yet exposed on the Settings page (Decision #35's `discord_bot` fields) - the README says to edit `config.yaml` directly for now; a small, low-risk Settings addition if wanted later, same category as the scheduler-windows gap.
+48. Final sweep for hardcoded gameplay-specific values (the last Phase 9 DoD item): nothing found beyond `AppConfig`'s `place_id` schema default, which is HANDOFF §6.6's own documented default value and is override-able per-preset - not a value hidden from configuration, just a sensible fallback for an omitted field, same as any other schema default in the codebase.
 2. Virtualenv at `.venv/` (git-ignored). Run with `.venv\Scripts\python -m warden`.
 3. Config split: **app config** (machine settings, detectors) vs **preset** (per-contract). Effective config = app + `active_preset`. Matches the preset example in HANDOFF §9.
 4. Config module lives at `warden/config/` (not in HANDOFF's layout; needed somewhere).
@@ -186,22 +210,8 @@ since you may want to try it earlier.
 
 ## Exact next step
 
-Start Phase 9 (the last one): packaging and docs.
-1. PyInstaller one-folder build (`pyproject.toml`'s `dev` extra already includes `pyinstaller`) -
-   write a `.spec` (or a plain `pyinstaller` invocation) that bundles `warden/`, `config/`
-   (defaults), and any Lucide/MIT icon assets used; verify it runs on a clean checkout (no `.venv`
-   dev dependencies beyond what's declared) - this is the one DoD item that benefits from an
-   actual clean-machine test, though not a *live Roblox* one, so it doesn't need to wait for the
-   user.
-2. README.md: install steps, optional Tesseract setup (OCR features degrade gracefully without
-   it - already true in `vision/ocr.py`), a first-run Calibration walkthrough (screenshot or
-   plain steps using the Phase 8 wizard), the public-vs-share_link warning (already in HANDOFF
-   §2/§6.6 and the Settings page - make sure the README repeats it prominently), Discord webhook/
-   bot setup steps, troubleshooting (Diagnostics page, common config errors), and the required
-   note that automating play is against Roblox's rules and can get the account banned - test on
-   an alt (HANDOFF §9's exact wording).
-3. Final sweep for hardcoded gameplay-specific values - everything should already live in
-   `config/default.yaml` or `config/presets/*.yaml` (placeholders throughout, never baked into
-   Python code), but worth one pass over `warden/` to confirm nothing slipped through.
-4. Clean-room check (HANDOFF §1): re-read the whole codebase's naming, log messages, and the
-   Lucide icon licensing note once real icons are chosen for packaging.
+**None - all 10 phases are built.** The only things left are the two user-facing items
+listed just above ("ALL PHASES COMPLETE"): run Calibration against your own screen, then
+try the one live test (killing Roblox mid-match) on an alt account. If picking this back
+up after a context reset with nothing further requested, there's nothing to build -
+re-read this file to get oriented, then wait for direction.
