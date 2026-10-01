@@ -71,6 +71,20 @@ class HomePage(QWidget):
         controls = row(self.start_btn, self.pause_btn, self.stop_btn, self.status_chip, stretch_last=True)
         layout.addWidget(controls)
 
+        # -- resume banner (section 9: "On next launch, Home offers Resume last session") ---
+        self.resume_banner = QWidget()
+        banner_layout = QHBoxLayout(self.resume_banner)
+        banner_layout.setContentsMargins(0, 0, 0, 0)
+        self.resume_label = QLabel("")
+        self.resume_label.setObjectName("Muted")
+        resume_btn = QPushButton("Resume")
+        resume_btn.clicked.connect(self._handle_start)
+        banner_layout.addWidget(self.resume_label, 1)
+        banner_layout.addWidget(resume_btn)
+        self.resume_banner.setVisible(False)
+        layout.addWidget(self.resume_banner)
+        self._refresh_resume_banner()
+
         # -- timer + contract progress ---------------------------------------------------
         top_card, top_layout = card()
         timers_row = QHBoxLayout()
@@ -194,6 +208,7 @@ class HomePage(QWidget):
         self.pause_btn.setEnabled(True)
         self.pause_btn.setText("Pause")
         self.stop_btn.setEnabled(True)
+        self.resume_banner.setVisible(False)
         if self._on_start:
             self._on_start()
 
@@ -242,6 +257,7 @@ class HomePage(QWidget):
         self.ctx.set_active_preset(preset_id)
         self._refresh_loadout_card()
         self._refresh_contract_label()
+        self._refresh_resume_banner()
 
     # -- live refresh -------------------------------------------------------
 
@@ -252,10 +268,25 @@ class HomePage(QWidget):
             label.setText(f"{slot.title()}: {value}")
 
     def _refresh_contract_label(self) -> None:
+        banked = self.ctx.contract_banked_hours()
         self.contract_label.setText(
-            f"{self.ctx.preset.contract.label} — target {self.ctx.preset.contract.target_hours:.1f}h (estimated)"
+            f"{self.ctx.preset.contract.label} — {banked:.2f}h / "
+            f"{self.ctx.preset.contract.target_hours:.1f}h banked (estimated)"
         )
         self.progress_bar.set_target(self.ctx.preset.contract.target_hours)
+        self.progress_bar.set_value(banked)
+
+    def _refresh_resume_banner(self) -> None:
+        state = self.ctx.persisted_state()
+        if state.last_session_incomplete and state.last_session_preset_id == self.ctx.preset_id:
+            banked = self.ctx.contract_banked_hours()
+            self.resume_label.setText(
+                f"Last session was interrupted - {banked:.2f}h already banked for "
+                f"'{self.ctx.preset.contract.label}'. Progress is safe."
+            )
+            self.resume_banner.setVisible(True)
+        else:
+            self.resume_banner.setVisible(False)
 
     def _refresh_live_stats(self) -> None:
         now = time.monotonic()
@@ -264,9 +295,8 @@ class HomePage(QWidget):
             elapsed = now - self._session_start - self._paused_total
             self.session_timer_label.setText(_format_hms(elapsed))
         if loop is not None:
-            dt = now - self._last_sample
-            if loop.sm.state is State.IN_MATCH:
-                self._in_match_seconds += dt
+            # TickLoop is the authoritative tracker (it's what gets persisted) - mirror it here.
+            self._in_match_seconds = loop._in_match_seconds
             self.status_chip.set_state(STATE_TO_CHIP.get(loop.sm.state, "ready"))
             c = loop.sm.counters
             self.tiles["respawns"].set_value(str(c.respawns))
@@ -276,6 +306,7 @@ class HomePage(QWidget):
             self.tiles["time_lost"].set_value(_format_hms(c.time_lost_s))
             session_s = max(now - (self._session_start or now) - self._paused_total, 0.001)
             self.tiles["uptime"].set_value(f"{min(self._in_match_seconds / session_s * 100, 100):.0f}%")
+            self.progress_bar.set_value(self.ctx.contract_banked_hours() + self._in_match_seconds / 3600.0)
             self.progress_bar.set_value(self._in_match_seconds / 3600.0)
             self._update_thumbnail(loop)
         self._last_sample = now

@@ -98,6 +98,48 @@ def test_home_page_live_stats_refresh_reads_counters(ctx):
     assert page.tiles["reconnects"].value_label.text() == "1"
 
 
+def test_home_page_shows_resume_banner_for_an_incomplete_session(ctx, warden_home):
+    # The autouse warden_home fixture points paths.data_home() (and so
+    # AppContext.persisted_state()) at this same per-test directory - write a
+    # real "crashed mid-session" state.json there, no mocking needed.
+    from warden.core.persistence import PersistenceManager
+    from warden.core.state_machine import Counters
+
+    mgr = PersistenceManager(warden_home / "state.json", warden_home / "sessions")
+    mgr.start_session(ctx.preset_id, ctx.preset.contract.label, ctx.preset.contract.target_hours)
+    mgr.maybe_flush(3600.0, Counters(), force=True)  # 1h banked, never cleanly stopped
+
+    page = HomePage(ctx)
+    assert not page.resume_banner.isHidden()
+    assert "banked" in page.resume_label.text()
+
+
+def test_home_page_no_resume_banner_for_a_different_preset(ctx, warden_home):
+    from warden.core.persistence import PersistenceManager
+    from warden.core.state_machine import Counters
+
+    mgr = PersistenceManager(warden_home / "state.json", warden_home / "sessions")
+    mgr.start_session("some_other_preset", "Other", 24.0)
+    mgr.maybe_flush(3600.0, Counters(), force=True)
+
+    page = HomePage(ctx)
+    assert page.resume_banner.isHidden()
+
+
+def test_home_page_hides_resume_banner_on_start(ctx, warden_home):
+    from warden.core.persistence import PersistenceManager
+    from warden.core.state_machine import Counters
+
+    mgr = PersistenceManager(warden_home / "state.json", warden_home / "sessions")
+    mgr.start_session(ctx.preset_id, ctx.preset.contract.label, ctx.preset.contract.target_hours)
+    mgr.maybe_flush(3600.0, Counters(), force=True)
+
+    page = HomePage(ctx)
+    assert not page.resume_banner.isHidden()
+    page.start_btn.click()
+    assert page.resume_banner.isHidden()
+
+
 def test_home_page_status_chip_follows_state_machine(ctx):
     page = HomePage(ctx)
     loop = ctx.ensure_tick_loop()

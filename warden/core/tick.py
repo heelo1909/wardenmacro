@@ -18,6 +18,8 @@ from warden.behaviors.humanize import Humanizer
 from warden.config.schema import AppConfig, Preset
 from warden.core.events import EventBus
 from warden.core.state_machine import Signals, State, StateMachine, Transition
+from warden.core.persistence import PersistenceManager
+from warden.core.scheduler import Scheduler, ShutdownCountdown, power_action
 from warden.flows.loadout import LoadoutTransaction
 from warden.flows.recovery import RecoverySequence
 from warden.geometry import Rect
@@ -241,6 +243,22 @@ class TickLoop:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
+        # -- Phase 6: persistence + scheduler -------------------------------------------------------
+        self.persistence = PersistenceManager(
+            paths.data_home() / "state.json", paths.data_dir("sessions"),
+            save_interval_s=app.timings.state_save_s,
+        )
+        self.scheduler = Scheduler(app.scheduler)
+        self._in_match_seconds = 0.0
+        self._last_tick_monotonic = time.monotonic()
+        self._session_active = False
+        self._incidents: list[str] = []
+        self._countdown: ShutdownCountdown | None = None
+        bus.subscribe(self._on_incident_event, min_level="warn", topics=["incident"])
+
+    def _on_incident_event(self, event) -> None:
+        self._incidents.append(f"{time.strftime('%H:%M:%S')} {event.message}")
+
     def _on_transition(self, t: Transition) -> None:
         self.bus.emit("state.transition", f"{t.frm.value} -> {t.to.value} ({t.cause})", level="info",
                       frm=t.frm.value, to=t.to.value, cause=t.cause)
@@ -295,11 +313,44 @@ class TickLoop:
             idle_warning=confirmed("idle_warning"),
             client_window_exists=client is not None, process_running=process_running,
         )
-        return self.sm.tick(signals)
+        result_state = self.sm.tick(signals)
+        self._bookkeep(result_state)
+        return result_state
+
+    def _bookkeep(self, result_state: State, now: float | None = None) -> None:
+        """Credited-time tracking + persistence flush + scheduler check - split
+        out from tick_once() so it's testable without the real capture/detect
+        pipeline (no Roblox/window enumeration required).
+        """
+        now = time.monotonic() if now is None else now
+        dt = now - self._last_tick_monotonic
+        self._last_tick_monotonic = now
+        if self.app.estimate.count_lobby_time:
+            credited = result_state not in (State.IDLE, State.PAUSED, State.STOPPED, State.LAUNCHING)
+        else:
+            credited = result_state is State.IN_MATCH
+        if credited and self._session_active:
+            self._in_match_seconds += dt
+
+        if self._session_active:
+            self.persistence.maybe_flush(self._in_match_seconds, self.sm.counters)
+            decision = self.scheduler.check(
+                in_match_hours=self._in_match_seconds / 3600.0,
+                target_hours=self.preset.contract.target_hours,
+                auto_stop_at_target=self.preset.contract.auto_stop_at_target,
+            )
+            if decision:
+                self._scheduled_stop(decision.reason)
 
     # -- lifecycle ------------------------------------------------------------
 
     def start(self) -> None:
+        self._in_match_seconds = 0.0
+        self._last_tick_monotonic = time.monotonic()
+        self._incidents = []
+        self._session_active = True
+        self.persistence.start_session(self.app.active_preset, self.preset.contract.label,
+                                        self.preset.contract.target_hours)
         self.sm.start()
 
         def loop():
@@ -329,3 +380,33 @@ class TickLoop:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
+        self._finalize_session()
+
+    def _scheduled_stop(self, reason: str) -> None:
+        """A stop triggered from inside the tick thread itself (scheduler) -
+        must never join self._thread (that would be the thread joining itself).
+        """
+        self.bus.emit("schedule.stop", f"stopping: {reason}", level="warn")
+        self.sm.stop()
+        self._stop.set()
+        self._finalize_session()
+        if self.app.scheduler.after_stop != "nothing":
+            self._countdown = ShutdownCountdown(
+                seconds=self.app.scheduler.countdown_s,
+                action=lambda: power_action(self.app.scheduler.after_stop),
+            )
+            self.bus.emit("schedule.countdown", f"{self.app.scheduler.after_stop} in "
+                                                f"{self.app.scheduler.countdown_s}s unless cancelled", "warn")
+            self._countdown.start()
+
+    def cancel_shutdown_countdown(self) -> bool:
+        if self._countdown is not None and not self._countdown.fired:
+            self._countdown.cancel()
+            self.bus.emit("schedule.countdown_cancelled", "shutdown/sleep cancelled", "info")
+            return True
+        return False
+
+    def _finalize_session(self) -> None:
+        if self._session_active:
+            self.persistence.end_session(self._in_match_seconds, self.sm.counters, list(self._incidents))
+            self._session_active = False

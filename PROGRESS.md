@@ -2,20 +2,20 @@
 
 ## Current phase
 
-**Phase 5 — GUI: COMPLETE.**
+**Phase 6 — Persistence, tracking, scheduler: COMPLETE.**
 Running autonomously through all phases per HANDOFF.md section 0's original
 instruction (user said "continue all phases without me", away at squash),
 stopping only for a live-Roblox-test DoD item or a genuine blocker.
-Next: Phase 6 — Persistence, tracking, scheduler.
+Next: Phase 7 — Integrations.
 
-**⚠️ Incident during this phase (2026-10-01), already handled - see "Decisions"
-#28 and `warden-testing-safety` memory:** a manual GUI smoke test briefly ran
-the real tick loop while the user's actual Roblox client happened to be open
-and focused. A read-only screenshot right after showed the lobby untouched;
-flagged to the user via SendUserFile + a message. Fixed the root cause (test
-isolation forcing `observe_only`) and separately found/reverted two test
-files that were accidentally writing to the real checked-in `config/`
-instead of a temp copy - also fixed.
+**⚠️ Incident during Phase 5 (2026-10-01), already handled - see "Decisions"
+#29/#30 and `warden-testing-safety` memory:** a manual GUI smoke test briefly
+ran the real tick loop while the user's actual Roblox client happened to be
+open and focused. A read-only screenshot right after showed the lobby
+untouched; flagged to the user via SendUserFile + a message. Fixed the root
+cause (test isolation forcing `observe_only`) and separately found/reverted
+two test files that were accidentally writing to the real checked-in
+`config/` instead of a temp copy - also fixed. No repeat since.
 
 ## Phase checklist
 
@@ -67,9 +67,16 @@ instead of a temp copy - also fixed.
 - [x] `pytest` runs green (203 tests)
 
 ### Phase 6 — Persistence, tracking, scheduler
-- [ ] Kill the app mid-session → relaunch → totals intact, Resume offered
-- [ ] Stop-at-target works (test with a 0.01 h target)
-- [ ] Scheduler windows and stop-at-time work; shutdown countdown is cancelable
+- [x] Kill the app mid-session → relaunch → totals intact, Resume offered — `warden/core/persistence.py` (atomic `state.json`, per-preset `ContractProgress`, all-time counters), Home page's resume banner
+- [x] Stop-at-target works (test with a 0.01 h target) — `warden/core/scheduler.py` (`Scheduler.check`), `TickLoop._scheduled_stop` (never joins its own thread), tested exactly with a 0.01h target
+- [x] Scheduler windows and stop-at-time work; shutdown countdown is cancelable — `in_any_window` (handles midnight wraparound), `ShutdownCountdown`
+- [x] `pytest` runs green (239 tests)
+
+### Phase 7 — Integrations
+- [ ] Discord webhook embed with screenshot on interval + alerts
+- [ ] Optional bot commands restricted to the user's Discord user ID
+- [ ] LAN dashboard reachable from a phone, PIN-gated controls, off by default
+- [ ] Toasts and sleep prevention working
 
 ---
 
@@ -128,6 +135,11 @@ since you may want to try it earlier.
 28. **GUI (Phase 5)** uses a thread-safe `BusBridge` (Qt signal wrapping every `EventBus` event) since `TickLoop` fires events from its own background thread, never the GUI thread. One shared mutable `AppContext` (config + bus + lazily-(re)built `TickLoop`) is passed to every page; `ensure_tick_loop()` rebuilds it fresh on every Start so Settings changes take effect without restarting the app. `History` and `Calibration` are intentionally partial for this phase (full cross-session history needs Phase 6 persistence; the full calibration wizard is Phase 8) - each explains what's missing and does something useful in the meantime (live session timeline; a checklist of templates still needed).
 29. **Safety incident during Phase 5, corrected (see `warden-testing-safety` memory):** a manual smoke test briefly ran the real tick loop while the user's actual Roblox client was open and focused on this machine - `observe_only` defaults to `false` (correctly, for the shipped product) and the focus gate only blocks input when Roblox *isn't* foreground, which it was. A read-only screenshot immediately after showed the lobby untouched; flagged to the user. Every test that builds a real `TickLoop` now forces `observe_only = True` (the one exception being a test that proves the focus-gate-blocks path specifically, which is safe without it because `FocusGate.set_target()` is never called there, so `hwnd` stays 0 and `is_focused()` is unconditionally False). Going forward: no more ad-hoc live smoke tests of `TickLoop.start()`/`MainWindow._start()` - rely on the offline pytest suite.
 30. **Separately found while adding GUI tests:** two test files (`test_gui_pages.py`, `test_gui_smoke.py`) were writing settings changes back into the real checked-in `config/default.yaml` and `config/presets/random.yaml` instead of a temp copy, because `AppContext.save_*()` writes to whatever `app_path`/`preset_path` point at, and those tests pointed straight at `bundled_config`. Reverted the accidental changes (`git checkout -- config/`) and fixed both tests to copy `config/` into `tmp_path` first. Worth remembering for any future test that builds an `AppContext` from `bundled_config`.
+31. **Persistence (Phase 6)** tracks only a *delta* since the last flush (`PersistenceManager._apply_delta`), not an absolute snapshot - `maybe_flush`/`end_session` can be called as often as convenient (every 30s per `timings.state_save_s`, or on-demand) without ever double-counting. `TickLoop._bookkeep()` is deliberately split out of `tick_once()` so Phase 6 logic (credited-time tracking, flush, scheduler check) is testable without a real capture/detect pipeline - tests drive it directly with a `result_state` and `now`, no Roblox or even a real window needed.
+32. **`_scheduled_stop` vs `stop()`:** a scheduler-triggered stop happens *from inside the tick thread itself* (called from `_bookkeep()`, called from `tick_once()`, called from the thread `start()` spawns) - it must never call `self._thread.join()` (a thread joining itself deadlocks). Only the externally-called `stop()` joins the thread; both funnel into the same `_finalize_session()` for persistence, guarded by `_session_active` so it's safe to call either one first.
+33. **`estimate.count_lobby_time`** (HANDOFF §12, "unconfirmed whether lobby time counts toward the contract") governs what counts as credited time: off (default) = only `IN_MATCH`; on = any state except `IDLE`/`PAUSED`/`STOPPED`/`LAUNCHING` (waiting for the client to even open never counts, regardless of the toggle).
+34. Home's "Resume last session" banner is informational, not a distinct code path - the banked hours for a preset are already safe (persisted per-preset in `state.json` regardless of how the last session ended), so its "Resume" button is just the ordinary Start button under a different label. It shows only when `last_session_incomplete` is true *and* matches the currently active preset.
+35. Scheduler `windows` (time-of-day run windows) are YAML/Settings-file-editable only for now - no dedicated add/remove list widget on the Settings page. The underlying logic (`in_any_window`, including midnight wraparound) is built and tested; a GUI list editor is a small, low-risk addition if wanted later.
 2. Virtualenv at `.venv/` (git-ignored). Run with `.venv\Scripts\python -m warden`.
 3. Config split: **app config** (machine settings, detectors) vs **preset** (per-contract). Effective config = app + `active_preset`. Matches the preset example in HANDOFF §9.
 4. Config module lives at `warden/config/` (not in HANDOFF's layout; needed somewhere).
@@ -152,10 +164,15 @@ since you may want to try it earlier.
 
 ## Exact next step
 
-Start Phase 6: `warden/core/persistence.py` (atomic `state.json` - cumulative AFK time per
-contract, all-time counters; `%LOCALAPPDATA%\Warden\sessions\<timestamp>.json` per-session
-summaries), wired so Home's session timer/counters/contract-progress survive an app restart
-and "Resume last session" can be offered. Then the scheduler (`core/tick.py` or a small
-`core/scheduler.py`: stop-at-target-hours using a 0.01h target for the test, stop-at-clock-time,
-time windows, optional sleep/shutdown with a cancelable 60s countdown) and wire its settings
-(already in `AppConfig.scheduler`, edited on the Settings page) to actually do something.
+Start Phase 7: `warden/integrations/{discord_webhook,discord_bot,lan_dashboard,toast}.py`.
+Webhook: a status embed every `interval_min` (screenshot, state, timers, counters, hours
+remaining - all already on the event bus / `TickLoop`) + instant alerts (disconnect, recovery
+result, unknown screen, a milestone every `milestone_hours`, target reached) via `requests`,
+using `AppConfig.integrations.discord_webhook`. Bot (optional): `/status /screenshot /pause
+/resume /stop` via `discord.py`, restricted to `allowed_user_id`. LAN dashboard (optional):
+`fastapi`+`uvicorn`, binds to `host`/`port` from config (already validated as a private range
+at the schema level - double check this at runtime too), PIN-gated controls, off by default.
+Toasts: `winotify` for incidents/milestones, gated by `integrations.toasts`. Sleep prevention
+(`SetThreadExecutionState`) during an active session, restored on stop - this one's small
+enough to land in `platform/power.py` (listed in HANDOFF's architecture, not yet created) and
+wire into `TickLoop.start()`/`stop()`.

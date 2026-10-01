@@ -72,3 +72,17 @@ class AppContext:
             self.tick_loop.stop()
         self.tick_loop = TickLoop(self.app, self.preset, self.bus)
         return self.tick_loop
+
+    def persisted_state(self):
+        """Durable state from a prior session (section 9), read fresh each
+        call - cheap, and always current even if nothing has started yet.
+        """
+        from warden import paths
+        from warden.core.persistence import load_state
+
+        return load_state(paths.data_home() / "state.json")
+
+    def contract_banked_hours(self, preset_id: str | None = None) -> float:
+        """Cumulative hours already credited to a contract from past sessions."""
+        entry = self.persisted_state().contracts.get(preset_id or self.preset_id)
+        return entry.cumulative_hours if entry else 0.0
