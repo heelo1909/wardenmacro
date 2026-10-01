@@ -1,0 +1,253 @@
+"""The main loop (HANDOFF section 4.2): capture -> detect -> decide -> act.
+
+``LiveActions`` implements ``GameActions`` against the real window/input/
+vision stack from Phase 1; ``TickLoop`` drives it. ``run_loadout`` and
+``handle_recovering`` are intentionally conservative stand-ins here - Phase 3
+replaces the former with a verified transaction, Phase 4 replaces the latter
+with the full leave/close/relaunch/backoff sequence. Nothing else in this
+file needs to change when they do (see ``GameActions`` in state_machine.py).
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from pathlib import Path
+
+from warden import paths
+from warden.behaviors.humanize import Humanizer
+from warden.config.schema import AppConfig, Preset
+from warden.core.events import EventBus
+from warden.core.state_machine import Signals, State, StateMachine, Transition
+from warden.geometry import Rect
+from warden.platform import dpi
+from warden.platform.input import InputController, build_methods
+from warden.platform.process import Launcher, RobloxProcess
+from warden.platform.window import FocusGate, Win32Windows, pick_client, pick_updater
+from warden.vision.capture import MssCapturer
+from warden.vision.detectors import Detection, FrozenDetector, WindowStateDetector, build_detectors
+from warden.vision.templates import TemplateLibrary
+
+log = logging.getLogger(__name__)
+
+_DEFAULT_CONTINUE_POS = (0.5, 0.9)  # fallback click spot when a detector gave no box
+
+
+class LiveActions:
+    def __init__(
+        self,
+        app: AppConfig,
+        preset: Preset,
+        input_ctl: InputController,
+        window_backend: Win32Windows,
+        launcher: Launcher,
+        process: RobloxProcess,
+        focus_gate: FocusGate,
+        bus: EventBus | None = None,
+        humanizer: Humanizer | None = None,
+    ):
+        self.app = app
+        self.preset = preset
+        self.input = input_ctl
+        self.window_backend = window_backend
+        self.launcher = launcher
+        self.process = process
+        self.focus_gate = focus_gate
+        self.bus = bus
+        self.h = humanizer or Humanizer(app.timings.jitter_pct)
+        self.detections: dict[str, Detection] = {}
+
+    def update_detections(self, detections: dict[str, Detection]) -> None:
+        self.detections = detections
+
+    def _center(self, name: str, fallback: tuple[float, float] = _DEFAULT_CONTINUE_POS) -> tuple[float, float]:
+        det = self.detections.get(name)
+        if det is not None and det.box is not None:
+            x1, y1, x2, y2 = det.box
+            return ((x1 + x2) / 2, (y1 + y2) / 2)
+        return fallback
+
+    def _emit(self, topic: str, message: str, level: str = "info", **data) -> None:
+        if self.bus is not None:
+            self.bus.emit(topic, message, level=level, **data)
+
+    # -- GameActions ------------------------------------------------------------
+
+    def launch(self) -> None:
+        uri = self.launcher.open_client(self.preset)
+        self._emit("action.launch", f"opened launch target: {uri}")
+
+    def click_play(self) -> None:
+        self.input.click_frac(*self._center("lobby_play", (0.5, 0.9)), what="lobby play button")
+
+    def scroll_mode_list(self) -> None:
+        self.input.wheel(-2, at=self._center("mode_list", (0.5, 0.5)))
+
+    def click_ffa(self) -> None:
+        self.input.click_frac(*self._center("ffa_tile"), what="FFA tile")
+
+    def click_midgame_join(self) -> None:
+        self.input.click_frac(*self._center("midgame_join"), what="mid-game join prompt")
+
+    def click_match_continue(self) -> None:
+        self.input.click_frac(*self._center("match_end"), what="match end continue")
+
+    def press_respawn(self) -> None:
+        self.input.key_tap(self.preset.keys.respawn)
+
+    def run_loadout(self) -> bool:
+        # Phase 3 replaces this with the verified 4-slot transaction (HANDOFF 6.3).
+        # Until then: never guess clicks, just accept whatever is equipped.
+        self._emit("loadout.stub", "loadout transaction not implemented yet (Phase 3) - "
+                                    "accepting current equipment as-is", "warn")
+        return True
+
+    def reapply_loadout_if_due(self) -> bool:
+        self._emit("loadout.stub", "post-respawn loadout reapply not implemented yet (Phase 3)", "debug")
+        return False
+
+    def save_unknown_frame(self) -> None:
+        out = paths.data_dir("unknown") / f"{time.strftime('%Y%m%d_%H%M%S')}.png"
+        frame = self.detections.get("_last_frame")
+        if frame is not None:
+            import cv2
+
+            cv2.imwrite(str(out), frame)
+        self._emit("unknown.saved", f"saved unknown-screen frame to {out}", "warn")
+
+    def press_escape(self) -> None:
+        self.input.key_tap("ESCAPE")
+
+    def handle_recovering(self, cause: str) -> State:
+        # Phase 4 replaces this with the full leave/close/relaunch/backoff/
+        # browser-fallback sequence (HANDOFF 6.5) and its own attempt/backoff
+        # state. For now: close whatever's left of the client and relaunch.
+        self._emit("recovery.stub", f"recovering from '{cause}' with the simple "
+                                     "close-and-relaunch stand-in (Phase 4 will replace this)", "warn")
+        self.process.close(self.focus_gate.hwnd or None, grace_s=self.app.recovery.close_grace_s)
+        self.launcher.open_client(self.preset)
+        return State.LAUNCHING
+
+    def on_incident(self, cause: str) -> None:
+        self._emit("incident", f"incident: {cause}", "warn", cause=cause)
+
+
+class TickLoop:
+    def __init__(self, app: AppConfig, preset: Preset, bus: EventBus):
+        self.app = app
+        self.preset = preset
+        self.bus = bus
+        dpi.ensure_dpi_awareness()
+
+        self.window_backend = Win32Windows()
+        self.focus_gate = FocusGate(self.window_backend)
+        self.capturer = MssCapturer()
+        self.humanizer = Humanizer(app.timings.jitter_pct)
+        methods = build_methods(app.input.methods)
+        self.input = InputController(
+            methods, self.focus_gate, rect=lambda: self._client_rect,
+            humanizer=self.humanizer, bus=bus, observe_only=app.observe_only,
+            jiggle_px=app.input.jiggle_px, key_hold_ms=tuple(app.input.key_hold_ms),
+        )
+        self.launcher = Launcher()
+        self.process = RobloxProcess(send_close=self.window_backend.send_close)
+        self.actions = LiveActions(app, preset, self.input, self.window_backend, self.launcher,
+                                    self.process, self.focus_gate, bus=bus, humanizer=self.humanizer)
+
+        templates = TemplateLibrary(paths.repo_root() / app.weapon_templates_dir)
+        self.detectors = build_detectors(app.detectors, templates)
+        self.frozen_detector = FrozenDetector(seconds=app.recovery.frozen_seconds)
+
+        self.sm = StateMachine(
+            self.actions, timeouts=app.timings.timeouts, on_transition=self._on_transition,
+            disconnect_confirm_captures=app.recovery.confirm_captures,
+            disconnect_confirm_seconds=app.recovery.confirm_seconds,
+            recovery_confirm_gap=app.recovery.confirmation_gap_s,
+            mode_select_scroll_attempts=app.input.mode_list_scroll_steps,
+        )
+
+        self._client_rect: Rect | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _on_transition(self, t: Transition) -> None:
+        self.bus.emit("state.transition", f"{t.frm.value} -> {t.to.value} ({t.cause})", level="info",
+                      frm=t.frm.value, to=t.to.value, cause=t.cause)
+
+    # -- one cycle ------------------------------------------------------------
+
+    def tick_once(self) -> State:
+        windows = self.window_backend.list_windows()
+        client = pick_client(windows)
+        updater = pick_updater(windows)
+        process_running = self.process.is_running()
+
+        if client is not None:
+            self.focus_gate.set_target(client.hwnd)
+            self._client_rect = client.client if not client.client.is_empty() else None
+        else:
+            self._client_rect = None
+
+        detections: dict = {}
+        frame = None
+        if self._client_rect is not None:
+            try:
+                frame = self.capturer.grab(self._client_rect)
+            except Exception:
+                log.exception("capture failed")
+        if frame is not None:
+            for name, det in self.detectors.items():
+                detections[name] = det.evaluate(frame)
+            detections["frozen"] = self.frozen_detector.evaluate(frame)
+            detections["_last_frame"] = frame
+        self.actions.update_detections(detections)
+
+        def confirmed(name: str) -> bool:
+            d = detections.get(name)
+            return bool(d and d.confirmed)
+
+        signals = Signals(
+            lobby_play=confirmed("lobby_play"), mode_list=confirmed("mode_list"),
+            ffa_tile=confirmed("ffa_tile"), health_bar=confirmed("health_bar"),
+            respawn_prompt=confirmed("respawn_prompt"), weapon_picker=confirmed("weapon_picker"),
+            switch_weapons=confirmed("switch_weapons"), midgame_join=confirmed("midgame_join"),
+            match_end=confirmed("match_end"), disconnect_modal=confirmed("disconnect_modal"),
+            roblox_updating=updater is not None, frozen=confirmed("frozen"),
+            idle_warning=confirmed("idle_warning"),
+            client_window_exists=client is not None, process_running=process_running,
+        )
+        return self.sm.tick(signals)
+
+    # -- lifecycle ------------------------------------------------------------
+
+    def start(self) -> None:
+        self.sm.start()
+
+        def loop():
+            while not self._stop.is_set():
+                started = time.monotonic()
+                try:
+                    self.tick_once()
+                except Exception:
+                    log.exception("tick failed")
+                elapsed = time.monotonic() - started
+                interval = self.humanizer.jitter(self.app.timings.tick_ms / 1000.0, pct=10)
+                self._stop.wait(max(0.0, interval - elapsed))
+
+        self._stop.clear()
+        self._thread = threading.Thread(target=loop, name="warden-tick", daemon=True)
+        self._thread.start()
+
+    def pause(self) -> None:
+        self.sm.pause()
+
+    def resume(self) -> None:
+        self.sm.resume()
+
+    def stop(self) -> None:
+        self.sm.stop()
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None

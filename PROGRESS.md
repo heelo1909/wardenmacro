@@ -2,11 +2,11 @@
 
 ## Current phase
 
-**Phase 1 — Platform & vision core: COMPLETE.**
-User approved Phase 0, then said "continue all phases without me" (away at squash) —
-now running autonomously through all phases per HANDOFF.md section 0's original
-instruction, stopping only for a live-Roblox-test DoD item or a genuine blocker.
-Next: Phase 2 — State machine, lobby, FFA, respawn, match end.
+**Phase 2 — State machine, lobby, FFA, respawn, match end: COMPLETE.**
+Running autonomously through all phases per HANDOFF.md section 0's original
+instruction (user said "continue all phases without me", away at squash),
+stopping only for a live-Roblox-test DoD item or a genuine blocker.
+Next: Phase 3 — Loadout transactions.
 
 ## Phase checklist
 
@@ -26,9 +26,17 @@ Next: Phase 2 — State machine, lobby, FFA, respawn, match end.
 - [x] `pytest` runs green (87 tests)
 
 ### Phase 2 — State machine, lobby, FFA, respawn, match end
-- [ ] All states in §6.1 implemented with timeouts and fallbacks
-- [ ] Replay tests over synthetic frame sequences cover every transition, incl. early-abort of FFA search + mid-game join
-- [ ] Respawn double-press logic tested; Respawns counter increments
+- [x] All 15 states in §6.1 implemented with timeouts and fallbacks — `warden/core/state_machine.py`
+- [x] Replay tests over synthetic frame sequences cover every transition, incl. early-abort of FFA search + mid-game join — `tests/test_state_machine.py` (71 cases), `warden/tools/replay.py` + `tests/test_replay.py`
+- [x] Respawn double-press logic tested; Respawns counter increments — `warden/flows/respawn.py`, `tests/test_flows_respawn.py`
+- [x] Bonus: wired Phase 1 + Phase 2 into a real drivable loop — `warden/core/tick.py` (`LiveActions` + `TickLoop`), runs safely with no Roblox present
+- [x] `pytest` runs green (156 tests)
+
+### Phase 3 — Loadout transactions
+- [ ] 4/4 verified commit path
+- [ ] Single-slot mismatch → corrected → Loadout fixes +1
+- [ ] Abort on death mid-transaction, retried at next safe window
+- [ ] Missing weapon tile never triggers a guessed click; diagnostic crop saved
 
 ## What exists
 
@@ -47,6 +55,11 @@ Next: Phase 2 — State machine, lobby, FFA, respawn, match end.
 13. `pydirectinput`/`pywin32` added as real (optional) deps now that Phase 1 uses them; fallback chain in `InputController` already tolerates either being absent.
 14. `warden/geometry.py` holds `Rect` (shared by platform + vision) — not in HANDOFF's layout but needed as a common module both depend on.
 15. Frozen-frame detector uses a mean-threshold perceptual hash; flat/solid-colour frames are a degenerate case for it (every pixel equals the mean), which only matters for synthetic test frames, not real captures.
+16. **State machine design (Phase 2):** a state's own handler only runs starting the tick *after* some other handler transitioned into it (transitions and the new state's first action are never in the same tick) — matches how LOBBY's "click once on entry" and DEAD's first respawn press behave, and is exercised directly by the tests rather than worked around.
+17. UNKNOWN and DISCONNECTED are one-tick waypoints, not stable states: UNKNOWN always auto-advances to RECOVERING on the next tick (after saving the frame + pressing Escape), DISCONNECTED auto-advances to RECOVERING the same tick it's confirmed. Both still appear in the transition log for GUI/History visibility.
+18. `RECOVERING`'s default behavior (`NullActions.handle_recovering` / `FakeActions` in tests) is to **stay in RECOVERING** (keep retrying) rather than guess a next state — Phase 4 provides the real backoff/leave/relaunch/browser-fallback sequence that decides when to hand off to LAUNCHING.
+19. `warden/core/tick.py` wires Phase 1 (window/input/vision) + Phase 2 (state machine) into a real loop (`TickLoop` + `LiveActions`). `run_loadout`/`reapply_loadout_if_due`/`handle_recovering` are clearly-logged stand-ins (accept current equipment / no reapply / simple close-and-relaunch) until Phases 3 and 4 replace them — no other code needs to change when they do, since they're just `GameActions` methods.
+20. Replay/state-machine tests jump a fresh `StateMachine` directly into the state under test (bypassing `_go`'s entry side effects, which are already at their reset position on a fresh machine) rather than re-deriving the full LAUNCHING→LOADING→LOBBY boot sequence for every single transition test. One true end-to-end boot test (`test_full_happy_path_launch_to_in_match`) covers the real sequence.
 2. Virtualenv at `.venv/` (git-ignored). Run with `.venv\Scripts\python -m warden`.
 3. Config split: **app config** (machine settings, detectors) vs **preset** (per-contract). Effective config = app + `active_preset`. Matches the preset example in HANDOFF §9.
 4. Config module lives at `warden/config/` (not in HANDOFF's layout; needed somewhere).
@@ -64,6 +77,12 @@ Next: Phase 2 — State machine, lobby, FFA, respawn, match end.
 
 ## Exact next step
 
-Start Phase 2: `warden/core/state_machine.py` (states from §6.1 with timeouts/fallbacks),
-`warden/flows/lobby.py`, `warden/flows/respawn.py`, and `warden/tools/replay.py` (offline
-replay harness over recorded/synthetic frame sequences) + its tests.
+Start Phase 3: `warden/flows/loadout.py` — the verified 4-slot loadout transaction
+(HANDOFF §6.3). Needs: per-slot weapon template matching inside the picker, open
+picker → select slot → locate tile → click → verify slot shows it → next slot,
+commit only on 4/4 verified, abort on death/picker-closed/disconnect, scroll/search
+inside the picker before giving up on a slot (never guess a grid position), save a
+diagnostic crop to `diagnostics/loadout/<timestamp>_<slot>.png` on any verification
+failure, and a `loadout_fixes` counter for corrected slots. Then wire it into
+`LiveActions.run_loadout`/`reapply_loadout_if_due` in `warden/core/tick.py`,
+replacing the Phase 2 stand-ins (no change needed to `state_machine.py` itself).
