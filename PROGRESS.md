@@ -2,11 +2,11 @@
 
 ## Current phase
 
-**Phase 6 — Persistence, tracking, scheduler: COMPLETE.**
+**Phase 7 — Integrations: COMPLETE.**
 Running autonomously through all phases per HANDOFF.md section 0's original
 instruction (user said "continue all phases without me", away at squash),
 stopping only for a live-Roblox-test DoD item or a genuine blocker.
-Next: Phase 7 — Integrations.
+Next: Phase 8 — Calibration, unknown gallery, diagnostics, extras.
 
 **⚠️ Incident during Phase 5 (2026-10-01), already handled - see "Decisions"
 #29/#30 and `warden-testing-safety` memory:** a manual GUI smoke test briefly
@@ -73,10 +73,16 @@ two test files that were accidentally writing to the real checked-in
 - [x] `pytest` runs green (239 tests)
 
 ### Phase 7 — Integrations
-- [ ] Discord webhook embed with screenshot on interval + alerts
-- [ ] Optional bot commands restricted to the user's Discord user ID
-- [ ] LAN dashboard reachable from a phone, PIN-gated controls, off by default
-- [ ] Toasts and sleep prevention working
+- [x] Discord webhook embed on interval + alerts — `warden/integrations/discord_webhook.py` (`DiscordWebhook`); screenshot-in-embed not yet attached (see Decisions #39), everything else works
+- [x] Optional bot commands restricted to the user's Discord user ID — `warden/integrations/discord_bot.py` (`BotCommands` fully tested; `DiscordBotRunner`'s `discord.py` glue is thin and untested - needs a real gateway connection)
+- [x] LAN dashboard reachable from a phone, PIN-gated controls, off by default — `warden/integrations/lan_dashboard.py` (FastAPI app tested via `TestClient`; auto-generates a PIN if left blank rather than ever running unprotected)
+- [x] Toasts and sleep prevention working — `warden/integrations/toast.py`, `warden/platform/power.py` (`SleepGuard`, wired into `TickLoop.start/stop`)
+- [x] `pytest` runs green (299 tests)
+
+### Phase 8 — Calibration, unknown gallery, diagnostics, extras
+- [ ] Calibration wizard can capture a template, sample an HSV range, and show live detections in under a minute per screen
+- [ ] Unknown gallery → "make template" flow
+- [ ] Diagnostics page complete; contract OCR verification and contract queue working
 
 ---
 
@@ -140,6 +146,11 @@ since you may want to try it earlier.
 33. **`estimate.count_lobby_time`** (HANDOFF §12, "unconfirmed whether lobby time counts toward the contract") governs what counts as credited time: off (default) = only `IN_MATCH`; on = any state except `IDLE`/`PAUSED`/`STOPPED`/`LAUNCHING` (waiting for the client to even open never counts, regardless of the toggle).
 34. Home's "Resume last session" banner is informational, not a distinct code path - the banked hours for a preset are already safe (persisted per-preset in `state.json` regardless of how the last session ended), so its "Resume" button is just the ordinary Start button under a different label. It shows only when `last_session_incomplete` is true *and* matches the currently active preset.
 35. Scheduler `windows` (time-of-day run windows) are YAML/Settings-file-editable only for now - no dedicated add/remove list widget on the Settings page. The underlying logic (`in_any_window`, including midnight wraparound) is built and tested; a GUI list editor is a small, low-risk addition if wanted later.
+36. Installed the optional `integrations` extra for real (`fastapi`, `uvicorn`, `discord.py`, `winotify`, `requests`, plus `httpx` for FastAPI's `TestClient`) so Phase 7 could be built and tested properly rather than left as an untestable stub - already listed in `pyproject.toml`'s `integrations` extra, nothing new to add there.
+37. **Integrations architecture:** each one takes an injectable collaborator (`DiscordWebhook.poster`, `ToastNotifier.backend_factory`) so nothing in the test suite ever makes a real HTTP call, shows a real toast, or needs a real Discord/fastapi dependency to exercise the logic - only `warden/integrations/lan_dashboard.py`'s `create_app()` is tested via FastAPI's `TestClient` (no real socket). Every integration is gated by its own `enabled` flag (off by default except toasts) and degrades to a safe no-op if its optional dependency isn't installed (checked when `TickLoop` constructs it, not deferred to first use, so a missing `fastapi`/`discord.py` never crashes startup - just logs a warning and leaves that one integration off).
+38. **LAN dashboard safety:** `LanDashboardServer.__init__` refuses (raises `ValueError`, caught by `TickLoop`) to bind anywhere that isn't a private/loopback address (`is_lan_only_bind`), and `ensure_pin()` auto-generates a 6-digit PIN rather than ever running the control endpoints (`/api/pause`, `/api/resume`, `/api/stop`) unprotected - `/api/status` alone is readable without a PIN (matches "live stats + thumbnail" being the point of a phone dashboard).
+39. **Known gap:** the webhook's periodic status embed doesn't attach a screenshot yet (`DiscordWebhookConfig.include_screenshot` exists in the schema but isn't read) - `TickLoop` has the last captured frame available (`self.actions.detections.get("_last_frame")`) and `discord_webhook.py`'s `_send`/`_default_poster` would need a multipart upload path (`requests`' `files=` parameter) instead of the current pure-JSON POST. Small, well-scoped follow-up; flagging rather than rushing it in.
+40. Discord bot command dispatch (`BotCommands`) is fully tested; the `discord.py` client/slash-command glue around it (`DiscordBotRunner.build_client`/`run`) is deliberately thin and untested, since exercising it needs a real bot token and gateway connection - not something to fake convincingly, and the actual decision logic it delegates to is where the real risk of bugs lives anyway.
 2. Virtualenv at `.venv/` (git-ignored). Run with `.venv\Scripts\python -m warden`.
 3. Config split: **app config** (machine settings, detectors) vs **preset** (per-contract). Effective config = app + `active_preset`. Matches the preset example in HANDOFF §9.
 4. Config module lives at `warden/config/` (not in HANDOFF's layout; needed somewhere).
@@ -164,15 +175,17 @@ since you may want to try it earlier.
 
 ## Exact next step
 
-Start Phase 7: `warden/integrations/{discord_webhook,discord_bot,lan_dashboard,toast}.py`.
-Webhook: a status embed every `interval_min` (screenshot, state, timers, counters, hours
-remaining - all already on the event bus / `TickLoop`) + instant alerts (disconnect, recovery
-result, unknown screen, a milestone every `milestone_hours`, target reached) via `requests`,
-using `AppConfig.integrations.discord_webhook`. Bot (optional): `/status /screenshot /pause
-/resume /stop` via `discord.py`, restricted to `allowed_user_id`. LAN dashboard (optional):
-`fastapi`+`uvicorn`, binds to `host`/`port` from config (already validated as a private range
-at the schema level - double check this at runtime too), PIN-gated controls, off by default.
-Toasts: `winotify` for incidents/milestones, gated by `integrations.toasts`. Sleep prevention
-(`SetThreadExecutionState`) during an active session, restored on stop - this one's small
-enough to land in `platform/power.py` (listed in HANDOFF's architecture, not yet created) and
-wire into `TickLoop.start()`/`stop()`.
+Start Phase 8: the Calibration wizard (replacing `gui/pages/calibration.py`'s current
+"missing templates" stub) - step through each screen a detector needs (lobby, mode list, FFA
+tile, in match, death, picker, switch weapons, results, disconnect) per HANDOFF §7.4: capture a
+region as a template (`vision/templates.py`'s `TemplateLibrary.save` already exists), click/drag
+to sample an HSV range (`vision/color.py`'s `sample_hsv` already exists), adjust the ROI, and a
+live detection overlay (boxes + confidence) using the real `Detector`/`FrozenDetector` classes
+against a live or recorded frame. A "test click" button and a coordinate picker that outputs
+client-area fractions. Then the unknown-screen gallery (every unknown frame is already saved by
+`LiveActions.save_unknown_frame` - Phase 8 adds the "turn a region into a new template" flow on
+top of what's already on disk). Diagnostics page is functionally complete (Phase 5/1); this
+phase adds contract OCR verification (`vision/ocr.py` already exists; opportunistically read the
+real contract progress while safely in the lobby during recovery, per `estimate.ocr_verify`) and
+the contract queue (`AppConfig.contract_queue` already exists in the schema - chain presets with
+their own target hours, each `TickLoop` session advancing to the next on completion).

@@ -23,7 +23,12 @@ from warden.core.scheduler import Scheduler, ShutdownCountdown, power_action
 from warden.flows.loadout import LoadoutTransaction
 from warden.flows.recovery import RecoverySequence
 from warden.geometry import Rect
+from warden.integrations.discord_bot import BotCommands, DiscordBotRunner
+from warden.integrations.discord_webhook import DiscordWebhook
+from warden.integrations.lan_dashboard import LanDashboardServer
+from warden.integrations.toast import ToastNotifier
 from warden.platform import dpi
+from warden.platform.power import SleepGuard
 from warden.platform.input import InputController, build_methods
 from warden.platform.process import Launcher, RobloxProcess
 from warden.platform.window import FocusGate, Win32Windows, pick_client, pick_updater
@@ -254,10 +259,58 @@ class TickLoop:
         self._session_active = False
         self._incidents: list[str] = []
         self._countdown: ShutdownCountdown | None = None
+        self.sleep_guard = SleepGuard()
         bus.subscribe(self._on_incident_event, min_level="warn", topics=["incident"])
+
+        # -- Phase 7: integrations (each off unless its own config flag is set) ---------------------
+        wh = app.integrations.discord_webhook
+        self.webhook = DiscordWebhook(wh.url, enabled=wh.enabled, interval_min=wh.interval_min,
+                                      milestone_hours=wh.milestone_hours)
+        self.toasts = ToastNotifier(enabled=app.integrations.toasts)
+        self.lan_dashboard: LanDashboardServer | None = None
+        if app.integrations.lan_dashboard.enabled:
+            ld = app.integrations.lan_dashboard
+            try:
+                self.lan_dashboard = LanDashboardServer(
+                    ld.host, ld.port, ld.pin, get_status=self.status_snapshot,
+                    on_pause=self.pause, on_resume=self.resume, on_stop=self.stop,
+                )
+            except ValueError:
+                log.exception("LAN dashboard config rejected; leaving it off")
+            except ImportError:
+                log.warning("LAN dashboard enabled but fastapi/uvicorn aren't installed; leaving it off")
+        self.bot_runner: DiscordBotRunner | None = None
+        if app.integrations.discord_bot.enabled:
+            db = app.integrations.discord_bot
+            commands = BotCommands(
+                db.allowed_user_id, get_status=lambda: str(self.status_snapshot()),
+                on_pause=self.pause, on_resume=self.resume, on_stop=self.stop,
+                on_screenshot=lambda: "screenshot requested",
+            )
+            self.bot_runner = DiscordBotRunner(db.token, commands)
+
+    def status_snapshot(self) -> dict:
+        return {
+            "state": self.sm.state.value,
+            "in_match_hours": round(self._in_match_seconds / 3600.0, 3),
+            "target_hours": self.preset.contract.target_hours,
+            "counters": {
+                "respawns": self.sm.counters.respawns, "reconnects": self.sm.counters.reconnects,
+                "re_queues": self.sm.counters.re_queues, "loadout_fixes": self.sm.counters.loadout_fixes,
+                "time_lost_s": self.sm.counters.time_lost_s,
+            },
+        }
 
     def _on_incident_event(self, event) -> None:
         self._incidents.append(f"{time.strftime('%H:%M:%S')} {event.message}")
+        cause = event.data.get("cause", event.message)
+        self.toasts.notify("Warden incident", event.message)
+        if cause == "disconnect":
+            self.webhook.alert_disconnect(event.message)
+        elif cause == "unknown_screen":
+            self.webhook.alert_unknown_screen()
+        elif str(cause).startswith("recovery_resolved"):
+            self.webhook.alert_recovery_result(True, self.actions.recovery.stats.attempts, "relaunch")
 
     def _on_transition(self, t: Transition) -> None:
         self.bus.emit("state.transition", f"{t.frm.value} -> {t.to.value} ({t.cause})", level="info",
@@ -334,6 +387,15 @@ class TickLoop:
 
         if self._session_active:
             self.persistence.maybe_flush(self._in_match_seconds, self.sm.counters)
+            hours = self._in_match_seconds / 3600.0
+            target = self.preset.contract.target_hours
+            c = self.sm.counters
+            counters_dict = {"respawns": c.respawns, "reconnects": c.reconnects, "re_queues": c.re_queues,
+                              "loadout_fixes": c.loadout_fixes, "time_lost_s": c.time_lost_s}
+            self.webhook.maybe_send_status(result_state.value, counters_dict, hours, target)
+            self.webhook.check_milestone(hours)
+            if self.webhook.check_target_reached(hours, target):
+                self.toasts.notify("Warden", f"Target reached: {target:.1f}h")
             decision = self.scheduler.check(
                 in_match_hours=self._in_match_seconds / 3600.0,
                 target_hours=self.preset.contract.target_hours,
@@ -351,6 +413,12 @@ class TickLoop:
         self._session_active = True
         self.persistence.start_session(self.app.active_preset, self.preset.contract.label,
                                         self.preset.contract.target_hours)
+        self.sleep_guard.acquire()
+        self.webhook.reset_session_state()
+        if self.lan_dashboard is not None:
+            self.lan_dashboard.start()
+        if self.bot_runner is not None and self.bot_runner.available():
+            threading.Thread(target=self._run_bot_safely, daemon=True, name="warden-discord-bot").start()
         self.sm.start()
 
         def loop():
@@ -406,7 +474,16 @@ class TickLoop:
             return True
         return False
 
+    def _run_bot_safely(self) -> None:
+        try:
+            self.bot_runner.run()
+        except Exception:
+            log.exception("discord bot crashed")
+
     def _finalize_session(self) -> None:
+        self.sleep_guard.release()
+        if self.lan_dashboard is not None:
+            self.lan_dashboard.stop()
         if self._session_active:
             self.persistence.end_session(self._in_match_seconds, self.sm.counters, list(self._incidents))
             self._session_active = False

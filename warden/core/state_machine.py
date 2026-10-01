@@ -472,4 +472,5 @@ class StateMachine:
 
     def _handle_unknown(self, s: Signals, now: float) -> None:
         self.counters.reconnects += 1
+        self.actions.on_incident("unknown_screen")
         self._go(State.RECOVERING, "unknown screen handled", now)
