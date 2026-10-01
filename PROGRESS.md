@@ -2,15 +2,20 @@
 
 ## Current phase
 
-**Phase 4 — Recovery: COMPLETE.**
+**Phase 5 — GUI: COMPLETE.**
 Running autonomously through all phases per HANDOFF.md section 0's original
 instruction (user said "continue all phases without me", away at squash),
 stopping only for a live-Roblox-test DoD item or a genuine blocker.
-Next: Phase 5 — GUI.
-The first genuinely live-only DoD item is in this phase ("killing
-RobloxPlayerBeta.exe mid-match -> back in public FFA, no input from user") -
-marked not-done below since it needs the real game; everything else in
-Phase 4 is built and tested offline.
+Next: Phase 6 — Persistence, tracking, scheduler.
+
+**⚠️ Incident during this phase (2026-10-01), already handled - see "Decisions"
+#28 and `warden-testing-safety` memory:** a manual GUI smoke test briefly ran
+the real tick loop while the user's actual Roblox client happened to be open
+and focused. A read-only screenshot right after showed the lobby untouched;
+flagged to the user via SendUserFile + a message. Fixed the root cause (test
+isolation forcing `observe_only`) and separately found/reverted two test
+files that were accidentally writing to the real checked-in `config/`
+instead of a temp copy - also fixed.
 
 ## Phase checklist
 
@@ -53,11 +58,18 @@ Phase 4 is built and tested offline.
 - [x] `pytest` runs green (182 tests)
 
 ### Phase 5 — GUI
-- [ ] All pages in section 7, dashboard updates live from the event bus
-- [ ] Presets switch from Home and persist
-- [ ] Hotkeys work while Roblox is focused
-- [ ] App never overlaps the Roblox client during a session
-- [ ] Summary dialog on stop
+- [x] All pages in section 7, dashboard updates live from the event bus — `warden/gui/pages/{home,loadout,settings,calibration,history,diagnostics}.py`, `warden/gui/bridge.py` (thread-safe EventBus→Qt signal bridge)
+- [x] Presets switch from Home and persist — `AppContext.set_active_preset`/`create_preset`/`delete_preset`
+- [x] Hotkeys work while Roblox is focused — `platform/hotkeys.py` (built Phase 1) now wired to Start/Pause/Stop/Screenshot in `MainWindow._setup_hotkeys`; pynput's global hook isn't scoped to a specific app, so it fires regardless of focus (matches intent)
+- [x] App never overlaps the Roblox client during a session — `MainWindow._start()` minimizes on Start per `gui.minimize_on_start`
+- [x] Summary dialog on stop — `warden/gui/summary_dialog.py`
+- [x] Bonus: mini overlay (extras §8.12) — `warden/gui/mini_overlay.py`
+- [x] `pytest` runs green (203 tests)
+
+### Phase 6 — Persistence, tracking, scheduler
+- [ ] Kill the app mid-session → relaunch → totals intact, Resume offered
+- [ ] Stop-at-target works (test with a 0.01 h target)
+- [ ] Scheduler windows and stop-at-time work; shutdown countdown is cancelable
 
 ---
 
@@ -113,6 +125,9 @@ since you may want to try it earlier.
 25. **Bug fixed in Phase 2's global interrupts** while building Phase 4: the `roblox_updating` and `disconnect_modal` checks re-fired every single tick the underlying signal stayed true, re-entering RECOVERING (and re-emitting incidents) forever and starving the actual RECOVERING-handling branch below them of ever running. Fixed by guarding both to only fire when not already RECOVERING/DISCONNECTED, and by resetting the disconnect streak confirmer whenever IN_MATCH is reached (by any path) so a stale mid-count streak from a resolved incident can't instantly re-trigger on a future single frame. Caught by `tests/test_recovery_integration.py`, a true end-to-end test (StateMachine + a real RecoverySequence, not mocked) — worth keeping this kind of test per phase going forward, not just unit tests against mocked collaborators.
 26. Added `GameActions.on_recovered()` (no-op in `NullActions`) so "the incident is over" is a first-class notification from the state machine itself (fired from `_go` on reaching IN_MATCH) rather than something `TickLoop` had to infer by watching transitions from outside — `LiveActions.on_recovered` calls `self.recovery.full_reset()`.
 27. `recovery_ui` config (leave/reconnect button positions) is another uncalibrated placeholder pair, same pattern as `loadout_ui`/detectors.
+28. **GUI (Phase 5)** uses a thread-safe `BusBridge` (Qt signal wrapping every `EventBus` event) since `TickLoop` fires events from its own background thread, never the GUI thread. One shared mutable `AppContext` (config + bus + lazily-(re)built `TickLoop`) is passed to every page; `ensure_tick_loop()` rebuilds it fresh on every Start so Settings changes take effect without restarting the app. `History` and `Calibration` are intentionally partial for this phase (full cross-session history needs Phase 6 persistence; the full calibration wizard is Phase 8) - each explains what's missing and does something useful in the meantime (live session timeline; a checklist of templates still needed).
+29. **Safety incident during Phase 5, corrected (see `warden-testing-safety` memory):** a manual smoke test briefly ran the real tick loop while the user's actual Roblox client was open and focused on this machine - `observe_only` defaults to `false` (correctly, for the shipped product) and the focus gate only blocks input when Roblox *isn't* foreground, which it was. A read-only screenshot immediately after showed the lobby untouched; flagged to the user. Every test that builds a real `TickLoop` now forces `observe_only = True` (the one exception being a test that proves the focus-gate-blocks path specifically, which is safe without it because `FocusGate.set_target()` is never called there, so `hwnd` stays 0 and `is_focused()` is unconditionally False). Going forward: no more ad-hoc live smoke tests of `TickLoop.start()`/`MainWindow._start()` - rely on the offline pytest suite.
+30. **Separately found while adding GUI tests:** two test files (`test_gui_pages.py`, `test_gui_smoke.py`) were writing settings changes back into the real checked-in `config/default.yaml` and `config/presets/random.yaml` instead of a temp copy, because `AppContext.save_*()` writes to whatever `app_path`/`preset_path` point at, and those tests pointed straight at `bundled_config`. Reverted the accidental changes (`git checkout -- config/`) and fixed both tests to copy `config/` into `tmp_path` first. Worth remembering for any future test that builds an `AppContext` from `bundled_config`.
 2. Virtualenv at `.venv/` (git-ignored). Run with `.venv\Scripts\python -m warden`.
 3. Config split: **app config** (machine settings, detectors) vs **preset** (per-contract). Effective config = app + `active_preset`. Matches the preset example in HANDOFF §9.
 4. Config module lives at `warden/config/` (not in HANDOFF's layout; needed somewhere).
@@ -126,17 +141,21 @@ since you may want to try it earlier.
 
 ## Known issues
 
-- None yet. GUI smoke test runs offscreen (`QT_QPA_PLATFORM=offscreen`).
+- GUI smoke tests run offscreen (`QT_QPA_PLATFORM=offscreen`, set in `tests/conftest.py`).
+- Session timer / in-match-% / contract progress on Home are in-memory only (reset on app
+  restart) - durable, cross-restart versions are Phase 6's job (`state.json`).
+- History page only shows the current session's live transitions, not past sessions (needs
+  Phase 6's `sessions/<timestamp>.json`). Calibration page lists missing templates but isn't
+  the real capture/sample/live-overlay wizard yet (Phase 8).
+- Settings page's hotkey fields are free-text key names, not an actual "press a key to bind"
+  capture widget - functional but not polished; fine to revisit as a later nicety.
 
 ## Exact next step
 
-Start Phase 5: the GUI pages in HANDOFF §7 (`gui/pages/{home,loadout,settings,
-calibration,history,diagnostics}.py`), wired to `core/tick.py`'s `TickLoop` and the
-event bus (which already carries every state transition, detection, incident, and
-`loadout`/`recovery` event from Phases 2-4). Home's counters (Respawns, Reconnects,
-Re-queues, Loadout fixes) read straight off `StateMachine.counters`; the session
-timer and contract-progress estimate are new (Phase 6 persistence will make them
-durable across restarts, but Home can show a live in-memory version now). Hotkeys
-(`platform/hotkeys.py`, built in Phase 1 but not yet wired to anything) bind
-Start/Pause/Stop/Screenshot to `TickLoop.start/pause/resume/stop`. Keep the main
-window off the Roblox client rect on Start (HANDOFF §6.2).
+Start Phase 6: `warden/core/persistence.py` (atomic `state.json` - cumulative AFK time per
+contract, all-time counters; `%LOCALAPPDATA%\Warden\sessions\<timestamp>.json` per-session
+summaries), wired so Home's session timer/counters/contract-progress survive an app restart
+and "Resume last session" can be offered. Then the scheduler (`core/tick.py` or a small
+`core/scheduler.py`: stop-at-target-hours using a 0.01h target for the test, stop-at-clock-time,
+time windows, optional sleep/shutdown with a cancelable 60s countdown) and wire its settings
+(already in `AppConfig.scheduler`, edited on the Settings page) to actually do something.
