@@ -84,6 +84,7 @@ class TemplateSpec(_Model):
     scale_min: Annotated[float, Field(gt=0)] = 0.75
     scale_max: Annotated[float, Field(gt=0)] = 1.25
     scale_steps: Annotated[int, Field(ge=1, le=41)] = 11
+    ref_width: Annotated[int, Field(gt=0)] | None = None  # client width the template was captured at
 
     @model_validator(mode="after")
     def _scales(self):
@@ -110,6 +111,7 @@ class DetectorConfig(_Model):
     template: TemplateSpec | None = None
     ocr: OCRSpec | None = None
     confirm_frames: Annotated[int, Field(ge=1, le=50)] = 2
+    params: dict[str, float] = Field(default_factory=dict)  # method-specific tuning knobs
 
     @model_validator(mode="after")
     def _ranges(self):
