@@ -2,11 +2,15 @@
 
 ## Current phase
 
-**Phase 3 — Loadout transactions: COMPLETE.**
+**Phase 4 — Recovery: COMPLETE.**
 Running autonomously through all phases per HANDOFF.md section 0's original
 instruction (user said "continue all phases without me", away at squash),
 stopping only for a live-Roblox-test DoD item or a genuine blocker.
-Next: Phase 4 — Recovery.
+Next: Phase 5 — GUI.
+The first genuinely live-only DoD item is in this phase ("killing
+RobloxPlayerBeta.exe mid-match -> back in public FFA, no input from user") -
+marked not-done below since it needs the real game; everything else in
+Phase 4 is built and tested offline.
 
 ## Phase checklist
 
@@ -41,11 +45,44 @@ Next: Phase 4 — Recovery.
 - [x] `pytest` runs green (169 tests)
 
 ### Phase 4 — Recovery
-- [ ] One-frame modal flash does **not** trigger recovery
-- [ ] Leave preferred over Reconnect; 3 attempts then browser fallback; then backoff
-- [ ] Frozen-frame, process-gone, and updater triggers tested
-- [ ] Incidents recorded with cause, attempts, method, time lost
-- [ ] (Live, when user starts it) killing `RobloxPlayerBeta.exe` mid-match → back in public FFA with verified loadout, no input from user
+- [x] One-frame modal flash does **not** trigger recovery — `_StreakConfirmer` (Phase 2) + regression test
+- [x] Leave preferred over Reconnect; 3 attempts then browser fallback; then backoff — `warden/flows/recovery.py` (`RecoverySequence`)
+- [x] Frozen-frame, process-gone, and updater triggers tested — Phase 2 global interrupts, re-verified with the fixed confirmers
+- [x] Incidents recorded with cause, attempts, method, time lost — `on_incident`/`RecoveryStats` + `TickLoop`'s `time_lost_s` bookkeeping
+- [ ] **(Live — needs the user)** killing `RobloxPlayerBeta.exe` mid-match → back in public FFA with verified loadout, no input from user. Can't be done offline; see "Live test needed" below.
+- [x] `pytest` runs green (182 tests)
+
+### Phase 5 — GUI
+- [ ] All pages in section 7, dashboard updates live from the event bus
+- [ ] Presets switch from Home and persist
+- [ ] Hotkeys work while Roblox is focused
+- [ ] App never overlaps the Roblox client during a session
+- [ ] Summary dialog on stop
+
+---
+
+## Live test needed (stopping point for Phase 4's last item)
+
+Everything in Phase 4 is built and covered by offline tests (`tests/test_flows_recovery.py`,
+`tests/test_recovery_integration.py`), **except** the one DoD item that can only be verified
+with the real game running, per HANDOFF §11 ("Live tests only when I explicitly start one,
+preferably on an alt account"). I did not run this — it needs you.
+
+**What to run, when you're ready (preferably on an alt account):**
+1. Launch RIVALS into a public FFA match through Warden (once the GUI exists in Phase 5) or
+   drive `warden.core.tick.TickLoop` directly against a real Roblox session.
+2. While in a match, kill `RobloxPlayerBeta.exe` from Task Manager.
+3. Expected: Warden detects the process is gone → `RECOVERING` → closes any remnants → relaunches
+   → walks back through `LOBBY → MODE_SELECT → FFA` → loadout reapplies → `IN_MATCH`, all without
+   you touching the keyboard or mouse.
+
+Known gap going into this: `recovery_ui.leave_pos`/`reconnect_pos` and all the detector
+ROIs/colors in `config/default.yaml` are **uncalibrated placeholders** (Phase 8 Calibration
+hasn't been built yet) — a live run this early will very likely fail to find the real buttons.
+I'm continuing through Phases 5-9 regardless (GUI, persistence, integrations, calibration,
+packaging) since most of that doesn't need a live Roblox client either, and Calibration
+(Phase 8) is what makes a real live run meaningful. Flagging this now rather than waiting,
+since you may want to try it earlier.
 
 ## What exists
 
@@ -72,6 +109,10 @@ Next: Phase 4 — Recovery.
 21. **Loadout transaction (Phase 3)** is a step-wise sub-flow (like `RespawnFlow`/`ModeSelectSearch`): `run_loadout()` does one small step per call (check already-equipped → click tab → search/scroll → click tile → verify) and is called once per tick while `weapon_picker` is visible, so it's naturally interruptible by the state machine's own abort checks rather than blocking through a multi-second transaction. A slot already showing the target weapon is never re-clicked (cheap to call repeatedly / on retry).
 22. Weapon templates live under `<weapon_templates_dir>/<slot>/<sanitized weapon name>.png` (`weapon_template_path()` in `flows/loadout.py`), in a **separate** `TemplateLibrary` from the one detector anchor templates use (whose paths like `templates/mode_list.png` are relative to the repo root, not the weapons subfolder) — `core/tick.py` builds both.
 23. `loadout_ui` config section (tab position, grid/verify ROIs per slot) is uncalibrated placeholders, same as the detectors — real values come from the Calibration wizard (Phase 8).
+24. **Recovery (Phase 4)** is a step-wise flow like the others (`RecoverySequence` in `flows/recovery.py`): steps 1-3 of §6.5 (Leave → wait → close if still running → relaunch) are its job; step 4 ("two independent confirmations we're in a match") was already built in Phase 2 (`StateMachine`'s `_GapConfirmer`) and stays there — the flow only ever has to hand off to `State.LAUNCHING` once a relaunch is kicked off, and the ordinary LAUNCHING→LOADING→LOBBY→MODE_SELECT→FFA path (also already built) covers the rest. Attempt count and backoff cycles persist **across separate RECOVERING re-entries within the same ongoing incident** (e.g. LAUNCHING times out again) and reset only when `on_recovered()` fires (state machine reaches IN_MATCH, by any path).
+25. **Bug fixed in Phase 2's global interrupts** while building Phase 4: the `roblox_updating` and `disconnect_modal` checks re-fired every single tick the underlying signal stayed true, re-entering RECOVERING (and re-emitting incidents) forever and starving the actual RECOVERING-handling branch below them of ever running. Fixed by guarding both to only fire when not already RECOVERING/DISCONNECTED, and by resetting the disconnect streak confirmer whenever IN_MATCH is reached (by any path) so a stale mid-count streak from a resolved incident can't instantly re-trigger on a future single frame. Caught by `tests/test_recovery_integration.py`, a true end-to-end test (StateMachine + a real RecoverySequence, not mocked) — worth keeping this kind of test per phase going forward, not just unit tests against mocked collaborators.
+26. Added `GameActions.on_recovered()` (no-op in `NullActions`) so "the incident is over" is a first-class notification from the state machine itself (fired from `_go` on reaching IN_MATCH) rather than something `TickLoop` had to infer by watching transitions from outside — `LiveActions.on_recovered` calls `self.recovery.full_reset()`.
+27. `recovery_ui` config (leave/reconnect button positions) is another uncalibrated placeholder pair, same pattern as `loadout_ui`/detectors.
 2. Virtualenv at `.venv/` (git-ignored). Run with `.venv\Scripts\python -m warden`.
 3. Config split: **app config** (machine settings, detectors) vs **preset** (per-contract). Effective config = app + `active_preset`. Matches the preset example in HANDOFF §9.
 4. Config module lives at `warden/config/` (not in HANDOFF's layout; needed somewhere).
@@ -89,16 +130,13 @@ Next: Phase 4 — Recovery.
 
 ## Exact next step
 
-Start Phase 4: `warden/flows/recovery.py` — the real leave/close/relaunch/backoff/
-browser-fallback sequence (HANDOFF §6.5), replacing `LiveActions.handle_recovering`'s
-current close-and-relaunch stand-in in `core/tick.py`. Needs: a disconnect candidate
-already requires ≥3 captures over ≥1.5s before DISCONNECTED fires (done in Phase 2's
-`_StreakConfirmer` — verify this still holds with the real detector, not just
-synthetic signals); prefer Leave over Reconnect (button identified via relative
-position + color + OCR, configurable); up to 3 attempts of
-close→relaunch→lobby→mode_select→FFA, each needing two independent health-bar
-confirmations ≥5s apart (Phase 2's `_GapConfirmer` already does the "did it work"
-check — Phase 4 adds the attempt loop around it); browser fallback on the 4th;
-exponential backoff 30s→10min cap forever after that; incident tracking (cause,
-attempts, method that worked, time lost) for the History page (Phase 5) and
-session persistence (Phase 6).
+Start Phase 5: the GUI pages in HANDOFF §7 (`gui/pages/{home,loadout,settings,
+calibration,history,diagnostics}.py`), wired to `core/tick.py`'s `TickLoop` and the
+event bus (which already carries every state transition, detection, incident, and
+`loadout`/`recovery` event from Phases 2-4). Home's counters (Respawns, Reconnects,
+Re-queues, Loadout fixes) read straight off `StateMachine.counters`; the session
+timer and contract-progress estimate are new (Phase 6 persistence will make them
+durable across restarts, but Home can show a live in-memory version now). Hotkeys
+(`platform/hotkeys.py`, built in Phase 1 but not yet wired to anything) bind
+Start/Pause/Stop/Screenshot to `TickLoop.start/pause/resume/stop`. Keep the main
+window off the Roblox client rect on Start (HANDOFF §6.2).

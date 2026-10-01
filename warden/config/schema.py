@@ -208,6 +208,13 @@ class LoadoutUI(_Model):
         return value
 
 
+class RecoveryUI(_Model):
+    """Disconnect modal button positions (client fractions) - uncalibrated placeholders."""
+
+    leave_pos: tuple[Frac, Frac] = (0.40, 0.60)
+    reconnect_pos: tuple[Frac, Frac] = (0.60, 0.60)
+
+
 class RecoveryConfig(_Model):
     prefer_button: Literal["leave", "reconnect"] = "leave"
     confirm_captures: Annotated[int, Field(ge=1)] = 3
@@ -339,6 +346,7 @@ class AppConfig(_Model):
     owned_weapons: OwnedWeapons = Field(default_factory=OwnedWeapons)
     weapon_templates_dir: str = "templates/weapons"
     loadout_ui: LoadoutUI = Field(default_factory=LoadoutUI)
+    recovery_ui: RecoveryUI = Field(default_factory=RecoveryUI)
     detectors: dict[str, DetectorConfig] = Field(default_factory=dict)
 
     @field_validator("detectors")

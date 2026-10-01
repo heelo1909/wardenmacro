@@ -118,6 +118,7 @@ class GameActions(Protocol):
     def press_escape(self) -> None: ...
     def handle_recovering(self, cause: str) -> State: ...
     def on_incident(self, cause: str) -> None: ...
+    def on_recovered(self) -> None: ...
 
 
 class NullActions:
@@ -136,6 +137,7 @@ class NullActions:
     def press_escape(self) -> None: pass
     def handle_recovering(self, cause: str) -> State: return State.RECOVERING
     def on_incident(self, cause: str) -> None: pass
+    def on_recovered(self) -> None: pass
 
 
 # --------------------------------------------------------------------------- confirmers
@@ -246,6 +248,13 @@ class StateMachine:
             self.counters.respawns += 1
         if new_state is State.LOBBY:
             self._lobby_retries = 0
+        if new_state is State.IN_MATCH:
+            # A fresh "confirmed in a match" moment, by any path - a disconnect
+            # confirmer left mid-count from a prior incident must not let a
+            # single future frame instantly re-trigger recovery, and whatever
+            # owns recovery/backoff state gets told the incident is over.
+            self._disconnect.reset()
+            self.actions.on_recovered()
         if self.on_transition:
             self.on_transition(t)
 
@@ -290,13 +299,18 @@ class StateMachine:
     # -- global interrupts -------------------------------------------------------
 
     def _global_interrupt(self, s: Signals, now: float) -> bool:
-        if s.roblox_updating:
+        # Once we're already RECOVERING, these two must not keep re-firing every
+        # tick the underlying signal stays True - that would re-trigger the
+        # DISCONNECTED->RECOVERING (or roblox_updating) transition forever and
+        # the RECOVERING branch below (which actually drives recovery) would
+        # never get a turn.
+        if s.roblox_updating and self.state is not State.RECOVERING:
             self.counters.reconnects += 1
             self.actions.on_incident("roblox_updating")
             self._go(State.RECOVERING, "roblox updating", now)
             return True
 
-        if self._disconnect.update(s.disconnect_modal, now):
+        if self.state not in (State.RECOVERING, State.DISCONNECTED) and self._disconnect.update(s.disconnect_modal, now):
             self.counters.reconnects += 1
             self.actions.on_incident("disconnect")
             self._go(State.DISCONNECTED, "disconnect modal confirmed", now)

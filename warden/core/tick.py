@@ -1,11 +1,9 @@
 """The main loop (HANDOFF section 4.2): capture -> detect -> decide -> act.
 
 ``LiveActions`` implements ``GameActions`` against the real window/input/
-vision stack from Phase 1; ``TickLoop`` drives it. ``run_loadout`` and
-``handle_recovering`` are intentionally conservative stand-ins here - Phase 3
-replaces the former with a verified transaction, Phase 4 replaces the latter
-with the full leave/close/relaunch/backoff sequence. Nothing else in this
-file needs to change when they do (see ``GameActions`` in state_machine.py).
+vision stack from Phase 1, with a verified loadout transaction (Phase 3) and
+the full leave/close/relaunch/backoff recovery sequence (Phase 4) behind it;
+``TickLoop`` drives it all.
 """
 
 from __future__ import annotations
@@ -21,6 +19,7 @@ from warden.config.schema import AppConfig, Preset
 from warden.core.events import EventBus
 from warden.core.state_machine import Signals, State, StateMachine, Transition
 from warden.flows.loadout import LoadoutTransaction
+from warden.flows.recovery import RecoverySequence
 from warden.geometry import Rect
 from warden.platform import dpi
 from warden.platform.input import InputController, build_methods
@@ -63,6 +62,7 @@ class LiveActions:
             self, weapon_templates, app.loadout_ui, get_frame=lambda: self.detections.get("_last_frame"),
             diagnostics_dir=paths.data_dir("diagnostics") / "loadout",
         )
+        self.recovery = RecoverySequence(self, app.recovery, clock=time.monotonic)
 
     def update_detections(self, detections: dict[str, Detection]) -> None:
         self.detections = detections
@@ -74,6 +74,25 @@ class LiveActions:
 
     def scroll(self, notches: int, at: tuple[float, float]) -> bool:
         return self.input.wheel(notches, at=at)
+
+    # -- RecoveryActions (RecoverySequence calls back into us) --------------------
+
+    def click_leave_or_reconnect(self, prefer: str) -> None:
+        pos = self.app.recovery_ui.leave_pos if prefer == "leave" else self.app.recovery_ui.reconnect_pos
+        self.input.click_frac(*pos, what=f"disconnect modal: {prefer}")
+
+    def process_is_running(self) -> bool:
+        return self.process.is_running()
+
+    def process_close(self, grace_s: float) -> None:
+        self.process.close(self.focus_gate.hwnd or None, grace_s=grace_s)
+
+    def open_browser_and_play(self) -> None:
+        url = self.launcher.open_browser(self.preset)
+        self._emit("action.browser_fallback", f"opened browser fallback: {url}", "warn")
+
+    def open_client(self) -> None:
+        self.launch()
 
     def _center(self, name: str, fallback: tuple[float, float] = _DEFAULT_CONTINUE_POS) -> tuple[float, float]:
         det = self.detections.get(name)
@@ -170,17 +189,13 @@ class LiveActions:
         self.input.key_tap("ESCAPE")
 
     def handle_recovering(self, cause: str) -> State:
-        # Phase 4 replaces this with the full leave/close/relaunch/backoff/
-        # browser-fallback sequence (HANDOFF 6.5) and its own attempt/backoff
-        # state. For now: close whatever's left of the client and relaunch.
-        self._emit("recovery.stub", f"recovering from '{cause}' with the simple "
-                                     "close-and-relaunch stand-in (Phase 4 will replace this)", "warn")
-        self.process.close(self.focus_gate.hwnd or None, grace_s=self.app.recovery.close_grace_s)
-        self.launcher.open_client(self.preset)
-        return State.LAUNCHING
+        return self.recovery.tick(cause)
 
     def on_incident(self, cause: str) -> None:
         self._emit("incident", f"incident: {cause}", "warn", cause=cause)
+
+    def on_recovered(self) -> None:
+        self.recovery.full_reset()
 
 
 class TickLoop:
@@ -222,12 +237,21 @@ class TickLoop:
         )
 
         self._client_rect: Rect | None = None
+        self._recovering_since: float | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def _on_transition(self, t: Transition) -> None:
         self.bus.emit("state.transition", f"{t.frm.value} -> {t.to.value} ({t.cause})", level="info",
                       frm=t.frm.value, to=t.to.value, cause=t.cause)
+        if t.to is State.RECOVERING and self._recovering_since is None:
+            self._recovering_since = t.ts
+        if t.to is State.IN_MATCH:
+            # on_recovered() (called by the state machine itself) already reset
+            # the recovery flow; this just finishes the time-lost bookkeeping.
+            if self._recovering_since is not None:
+                self.sm.counters.time_lost_s += t.ts - self._recovering_since
+                self._recovering_since = None
 
     # -- one cycle ------------------------------------------------------------
 
