@@ -2,11 +2,11 @@
 
 ## Current phase
 
-**Phase 2 — State machine, lobby, FFA, respawn, match end: COMPLETE.**
+**Phase 3 — Loadout transactions: COMPLETE.**
 Running autonomously through all phases per HANDOFF.md section 0's original
 instruction (user said "continue all phases without me", away at squash),
 stopping only for a live-Roblox-test DoD item or a genuine blocker.
-Next: Phase 3 — Loadout transactions.
+Next: Phase 4 — Recovery.
 
 ## Phase checklist
 
@@ -33,10 +33,19 @@ Next: Phase 3 — Loadout transactions.
 - [x] `pytest` runs green (156 tests)
 
 ### Phase 3 — Loadout transactions
-- [ ] 4/4 verified commit path
-- [ ] Single-slot mismatch → corrected → Loadout fixes +1
-- [ ] Abort on death mid-transaction, retried at next safe window
-- [ ] Missing weapon tile never triggers a guessed click; diagnostic crop saved
+- [x] 4/4 verified commit path — `warden/flows/loadout.py` (`LoadoutTransaction`), `tests/test_flows_loadout.py` (13 cases)
+- [x] Single-slot mismatch → corrected → Loadout fixes +1 — `LoadoutResult.fixes`
+- [x] Abort on death mid-transaction, retried at next safe window — already handled by `_handle_loadout` in Phase 2 (`run_loadout()` is a single idempotent step the state machine can abandon any tick; already-equipped slots are skipped on retry, so nothing is redone)
+- [x] Missing weapon tile never triggers a guessed click; diagnostic crop saved — `diagnostics/loadout/<timestamp>_<slot>.png`
+- [x] Wired into `LiveActions.run_loadout`/`reapply_loadout_if_due` in `core/tick.py` — two `TemplateLibrary` instances (repo-root for detector anchor templates, `weapon_templates_dir` for per-weapon templates)
+- [x] `pytest` runs green (169 tests)
+
+### Phase 4 — Recovery
+- [ ] One-frame modal flash does **not** trigger recovery
+- [ ] Leave preferred over Reconnect; 3 attempts then browser fallback; then backoff
+- [ ] Frozen-frame, process-gone, and updater triggers tested
+- [ ] Incidents recorded with cause, attempts, method, time lost
+- [ ] (Live, when user starts it) killing `RobloxPlayerBeta.exe` mid-match → back in public FFA with verified loadout, no input from user
 
 ## What exists
 
@@ -60,6 +69,9 @@ Next: Phase 3 — Loadout transactions.
 18. `RECOVERING`'s default behavior (`NullActions.handle_recovering` / `FakeActions` in tests) is to **stay in RECOVERING** (keep retrying) rather than guess a next state — Phase 4 provides the real backoff/leave/relaunch/browser-fallback sequence that decides when to hand off to LAUNCHING.
 19. `warden/core/tick.py` wires Phase 1 (window/input/vision) + Phase 2 (state machine) into a real loop (`TickLoop` + `LiveActions`). `run_loadout`/`reapply_loadout_if_due`/`handle_recovering` are clearly-logged stand-ins (accept current equipment / no reapply / simple close-and-relaunch) until Phases 3 and 4 replace them — no other code needs to change when they do, since they're just `GameActions` methods.
 20. Replay/state-machine tests jump a fresh `StateMachine` directly into the state under test (bypassing `_go`'s entry side effects, which are already at their reset position on a fresh machine) rather than re-deriving the full LAUNCHING→LOADING→LOBBY boot sequence for every single transition test. One true end-to-end boot test (`test_full_happy_path_launch_to_in_match`) covers the real sequence.
+21. **Loadout transaction (Phase 3)** is a step-wise sub-flow (like `RespawnFlow`/`ModeSelectSearch`): `run_loadout()` does one small step per call (check already-equipped → click tab → search/scroll → click tile → verify) and is called once per tick while `weapon_picker` is visible, so it's naturally interruptible by the state machine's own abort checks rather than blocking through a multi-second transaction. A slot already showing the target weapon is never re-clicked (cheap to call repeatedly / on retry).
+22. Weapon templates live under `<weapon_templates_dir>/<slot>/<sanitized weapon name>.png` (`weapon_template_path()` in `flows/loadout.py`), in a **separate** `TemplateLibrary` from the one detector anchor templates use (whose paths like `templates/mode_list.png` are relative to the repo root, not the weapons subfolder) — `core/tick.py` builds both.
+23. `loadout_ui` config section (tab position, grid/verify ROIs per slot) is uncalibrated placeholders, same as the detectors — real values come from the Calibration wizard (Phase 8).
 2. Virtualenv at `.venv/` (git-ignored). Run with `.venv\Scripts\python -m warden`.
 3. Config split: **app config** (machine settings, detectors) vs **preset** (per-contract). Effective config = app + `active_preset`. Matches the preset example in HANDOFF §9.
 4. Config module lives at `warden/config/` (not in HANDOFF's layout; needed somewhere).
@@ -77,12 +89,16 @@ Next: Phase 3 — Loadout transactions.
 
 ## Exact next step
 
-Start Phase 3: `warden/flows/loadout.py` — the verified 4-slot loadout transaction
-(HANDOFF §6.3). Needs: per-slot weapon template matching inside the picker, open
-picker → select slot → locate tile → click → verify slot shows it → next slot,
-commit only on 4/4 verified, abort on death/picker-closed/disconnect, scroll/search
-inside the picker before giving up on a slot (never guess a grid position), save a
-diagnostic crop to `diagnostics/loadout/<timestamp>_<slot>.png` on any verification
-failure, and a `loadout_fixes` counter for corrected slots. Then wire it into
-`LiveActions.run_loadout`/`reapply_loadout_if_due` in `warden/core/tick.py`,
-replacing the Phase 2 stand-ins (no change needed to `state_machine.py` itself).
+Start Phase 4: `warden/flows/recovery.py` — the real leave/close/relaunch/backoff/
+browser-fallback sequence (HANDOFF §6.5), replacing `LiveActions.handle_recovering`'s
+current close-and-relaunch stand-in in `core/tick.py`. Needs: a disconnect candidate
+already requires ≥3 captures over ≥1.5s before DISCONNECTED fires (done in Phase 2's
+`_StreakConfirmer` — verify this still holds with the real detector, not just
+synthetic signals); prefer Leave over Reconnect (button identified via relative
+position + color + OCR, configurable); up to 3 attempts of
+close→relaunch→lobby→mode_select→FFA, each needing two independent health-bar
+confirmations ≥5s apart (Phase 2's `_GapConfirmer` already does the "did it work"
+check — Phase 4 adds the attempt loop around it); browser fallback on the 4th;
+exponential backoff 30s→10min cap forever after that; incident tracking (cause,
+attempts, method that worked, time lost) for the History page (Phase 5) and
+session persistence (Phase 6).

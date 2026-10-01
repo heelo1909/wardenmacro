@@ -31,10 +31,12 @@ def test_live_actions_click_falls_back_to_default_position(bundled_config):
     assert any(e.topic == "input.blocked" for e in events)
 
 
-def test_live_actions_run_loadout_stub_accepts_current_equipment(bundled_config):
+def test_live_actions_run_loadout_without_captured_templates_fails_safely(bundled_config):
+    # No weapon templates exist yet (Calibration is Phase 8) - it must never
+    # guess a click, just report the slots it couldn't verify.
     loaded = load_all(bundled_config / "default.yaml")
     loop = TickLoop(loaded.app, loaded.preset, EventBus())
-    assert loop.actions.run_loadout() is True
+    assert loop.actions.run_loadout() is False
     assert loop.actions.reapply_loadout_if_due() is False
 
 

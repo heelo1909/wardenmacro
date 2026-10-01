@@ -182,6 +182,32 @@ class InputConfig(_Model):
         return value
 
 
+class LoadoutSlotUI(_Model):
+    """Where to find and verify one loadout slot in the weapon picker (client fractions).
+
+    All placeholders until Calibration (Phase 8) captures the real picker layout.
+    """
+
+    tab: tuple[Frac, Frac]              # click position to open this slot's category tab
+    grid_roi: ROI                       # scrollable area where weapon tiles can be found
+    verify_roi: ROI                     # where the now-equipped weapon's icon/name is shown
+
+
+class LoadoutUI(_Model):
+    slots: dict[str, LoadoutSlotUI] = Field(default_factory=dict)
+    max_search_scrolls: Annotated[int, Field(ge=0, le=30)] = 6
+    verify_threshold: Frac = 0.75
+    scroll_notches: Annotated[int, Field(ge=1, le=10)] = 2
+
+    @field_validator("slots")
+    @classmethod
+    def _known_slots(cls, value: dict[str, LoadoutSlotUI]):
+        unknown = sorted(set(value) - set(SLOTS))
+        if unknown:
+            raise ValueError(f"unknown loadout slot(s): {', '.join(unknown)}; known: {', '.join(SLOTS)}")
+        return value
+
+
 class RecoveryConfig(_Model):
     prefer_button: Literal["leave", "reconnect"] = "leave"
     confirm_captures: Annotated[int, Field(ge=1)] = 3
@@ -312,6 +338,7 @@ class AppConfig(_Model):
     estimate: ContractEstimate = Field(default_factory=ContractEstimate)
     owned_weapons: OwnedWeapons = Field(default_factory=OwnedWeapons)
     weapon_templates_dir: str = "templates/weapons"
+    loadout_ui: LoadoutUI = Field(default_factory=LoadoutUI)
     detectors: dict[str, DetectorConfig] = Field(default_factory=dict)
 
     @field_validator("detectors")

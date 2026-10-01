@@ -20,6 +20,7 @@ from warden.behaviors.humanize import Humanizer
 from warden.config.schema import AppConfig, Preset
 from warden.core.events import EventBus
 from warden.core.state_machine import Signals, State, StateMachine, Transition
+from warden.flows.loadout import LoadoutTransaction
 from warden.geometry import Rect
 from warden.platform import dpi
 from warden.platform.input import InputController, build_methods
@@ -44,6 +45,7 @@ class LiveActions:
         launcher: Launcher,
         process: RobloxProcess,
         focus_gate: FocusGate,
+        weapon_templates: TemplateLibrary,
         bus: EventBus | None = None,
         humanizer: Humanizer | None = None,
     ):
@@ -57,9 +59,21 @@ class LiveActions:
         self.bus = bus
         self.h = humanizer or Humanizer(app.timings.jitter_pct)
         self.detections: dict[str, Detection] = {}
+        self.loadout = LoadoutTransaction(
+            self, weapon_templates, app.loadout_ui, get_frame=lambda: self.detections.get("_last_frame"),
+            diagnostics_dir=paths.data_dir("diagnostics") / "loadout",
+        )
 
     def update_detections(self, detections: dict[str, Detection]) -> None:
         self.detections = detections
+
+    # -- LoadoutActions (LoadoutTransaction calls back into us) --------------------
+
+    def click_frac(self, fx: float, fy: float, what: str = "") -> bool:
+        return self.input.click_frac(fx, fy, what=what)
+
+    def scroll(self, notches: int, at: tuple[float, float]) -> bool:
+        return self.input.wheel(notches, at=at)
 
     def _center(self, name: str, fallback: tuple[float, float] = _DEFAULT_CONTINUE_POS) -> tuple[float, float]:
         det = self.detections.get(name)
@@ -96,16 +110,52 @@ class LiveActions:
     def press_respawn(self) -> None:
         self.input.key_tap(self.preset.keys.respawn)
 
+    def _start_loadout_if_idle(self) -> None:
+        if self.loadout.done:
+            target = self.preset.loadout.slots() if not self.preset.loadout.random else self._random_loadout()
+            self.loadout.reset(target)
+
+    def _random_loadout(self) -> dict[str, str]:
+        import random
+
+        owned = self.app.owned_weapons
+        picks = {}
+        for slot in ("primary", "secondary", "melee", "utility"):
+            pool = getattr(owned, slot)
+            if pool:
+                picks[slot] = random.choice(pool)
+        return picks
+
     def run_loadout(self) -> bool:
-        # Phase 3 replaces this with the verified 4-slot transaction (HANDOFF 6.3).
-        # Until then: never guess clicks, just accept whatever is equipped.
-        self._emit("loadout.stub", "loadout transaction not implemented yet (Phase 3) - "
-                                    "accepting current equipment as-is", "warn")
-        return True
+        """One tick's worth of the loadout transaction (HANDOFF 6.3). Verified,
+        never guesses a position, and is interruptible between slots - the
+        state machine aborts this itself (death/picker-closed/disconnect).
+        """
+        self._start_loadout_if_idle()
+        done = self.loadout.tick()
+        if done:
+            if self.loadout.result.success:
+                self._emit("loadout.committed", f"loadout committed ({self.loadout.result.fixes} slot(s) fixed)",
+                           "success")
+            else:
+                failed = [s for s, o in self.loadout.result.slots.items() if not o.verified]
+                self._emit("loadout.incomplete", f"loadout incomplete, slot(s) failed: {', '.join(failed)}", "warn")
+            return self.loadout.result.success
+        return False
 
     def reapply_loadout_if_due(self) -> bool:
-        self._emit("loadout.stub", "post-respawn loadout reapply not implemented yet (Phase 3)", "debug")
-        return False
+        """Called by the respawn flow during the post-respawn switch-weapons
+        window. Runs the check-and-fix pass inline (each slot's "already
+        equipped" pre-check makes repeated calls cheap, and this window is
+        brief enough that blocking a few ticks here is fine).
+        """
+        self._start_loadout_if_idle()
+        safety_cap = 500  # frame capture could stall; never block this thread forever
+        for _ in range(safety_cap):
+            if self.loadout.tick():
+                break
+        self._emit("loadout.reapplied", f"post-respawn loadout check ({self.loadout.result.fixes} slot(s) fixed)")
+        return self.loadout.result.fixes > 0
 
     def save_unknown_frame(self) -> None:
         out = paths.data_dir("unknown") / f"{time.strftime('%Y%m%d_%H%M%S')}.png"
@@ -152,11 +202,15 @@ class TickLoop:
         )
         self.launcher = Launcher()
         self.process = RobloxProcess(send_close=self.window_backend.send_close)
+        weapon_templates = TemplateLibrary(paths.repo_root() / app.weapon_templates_dir)
         self.actions = LiveActions(app, preset, self.input, self.window_backend, self.launcher,
-                                    self.process, self.focus_gate, bus=bus, humanizer=self.humanizer)
+                                    self.process, self.focus_gate, weapon_templates, bus=bus,
+                                    humanizer=self.humanizer)
 
-        templates = TemplateLibrary(paths.repo_root() / app.weapon_templates_dir)
-        self.detectors = build_detectors(app.detectors, templates)
+        # Detector template paths (e.g. "templates/mode_list.png") are relative to the
+        # repo root, not the weapons subfolder - a separate library, same cache behavior.
+        detector_templates = TemplateLibrary(paths.repo_root())
+        self.detectors = build_detectors(app.detectors, detector_templates)
         self.frozen_detector = FrozenDetector(seconds=app.recovery.frozen_seconds)
 
         self.sm = StateMachine(
