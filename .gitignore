@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+dist/
+*.spec.bak
+# local runtime data never belongs in the repo
+diagnostics/
+unknown/
+recordings/
+logs/

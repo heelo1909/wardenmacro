@@ -1,0 +1,24 @@
+name: Glass Wrap
+contract:
+  label: Glass Wrap
+  target_hours: 24
+  auto_stop_at_target: true
+launch:
+  mode: public              # public | share_link (share links may NOT count toward contracts)
+  place_id: 17625359962     # verify from the game's roblox.com URL
+  share_code: ""
+loadout:                    # placeholders - to be confirmed
+  primary: Grenade Launcher
+  secondary: Handgun
+  melee: Fists
+  utility: Grenade
+behavior:
+  profile: idle_nudge
+  anti_idle_seconds: 75
+  jitter_pct: 15
+abilities:
+  enabled: false
+  keys: [{ key: F, every_seconds: 20 }]
+keys:
+  respawn: SPACE
+  loadout: M
