@@ -65,10 +65,37 @@ def test_load_image_from_disk(ctx, tmp_path):
     assert "test_frame.png" in page.result_label.text()
 
 
-def test_capture_live_without_a_running_session_warns(ctx, tmp_path):
+def test_capture_live_without_roblox_open_warns(ctx, tmp_path, monkeypatch):
+    # Never touch a real Roblox window from a test (warden-testing-safety).
+    monkeypatch.setattr("warden.vision.capture.grab_roblox_client", lambda focus=True: None)
     page = CalibrationPage(ctx, templates_root=tmp_path)
     page._capture_live()
-    assert "start a session" in page.result_label.text().lower()
+    assert "roblox window" in page.result_label.text().lower()
+
+
+def test_capture_live_works_without_a_running_session(ctx, tmp_path, monkeypatch):
+    """Calibrating used to require Start - which ran the very loop that kept
+    relaunching Roblox. It must now grab the client window directly."""
+    frame = blank()
+    monkeypatch.setattr("warden.vision.capture.grab_roblox_client", lambda focus=True: frame)
+    assert ctx.tick_loop is None
+    page = CalibrationPage(ctx, templates_root=tmp_path)
+    page._capture_live()
+    assert page._frame is frame
+    assert "captured" in page.result_label.text().lower()
+
+
+def test_saving_a_template_for_a_color_detector_switches_it_to_template(ctx, tmp_path):
+    page = CalibrationPage(ctx, templates_root=tmp_path)
+    assert ctx.app.detectors["lobby_play"].method == "color"
+    page._frame = blank()
+    page.screen_combo.setCurrentText("lobby_play")
+    page.canvas.set_frame(page._frame)
+    page.canvas._selection_px = (10, 10, 60, 40)
+    page._save_template()
+    cfg = ctx.app.detectors["lobby_play"]
+    assert cfg.method == "template"
+    assert (tmp_path / cfg.template.path).exists()
 
 
 def test_save_template_without_selection_warns(ctx, tmp_path):

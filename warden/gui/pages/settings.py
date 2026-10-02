@@ -144,6 +144,8 @@ class SettingsPage(QWidget):
         widget, layout = card()
         form = QFormLayout()
         form.setSpacing(8)
+        # Narrow window: put a field under its label instead of squeezing both.
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         layout.addLayout(form)
         return widget, form
 

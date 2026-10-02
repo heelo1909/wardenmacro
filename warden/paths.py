@@ -32,6 +32,18 @@ def data_home() -> Path:
     return Path(base) / APP_NAME
 
 
+def templates_home() -> Path:
+    """Where captured templates are saved and looked up first.
+
+    Lives under the data home (not the install folder) so templates survive a
+    rebuild/reinstall of the packaged app and are found no matter whether
+    Warden runs from source or from ``dist\\Warden\\Warden.exe``. Template
+    paths in config (``templates/mode_list.png``) are relative to this folder;
+    ``repo_root()`` is kept as a read-only fallback for older captures.
+    """
+    return data_home()
+
+
 def data_dir(name: str) -> Path:
     """A named subfolder of the data home (logs, sessions, diagnostics, ...), created on demand."""
     path = data_home() / name

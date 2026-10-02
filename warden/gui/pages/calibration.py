@@ -31,7 +31,7 @@ from warden.flows.calibration import (
 )
 from warden.flows.loadout import weapon_template_path
 from warden.gui.context import AppContext
-from warden.gui.widgets import ImageCanvas, card, muted, page_header, row, section_label
+from warden.gui.widgets import FlowLayout, ImageCanvas, ResponsiveRow, card, muted, page_header, row, section_label
 from warden.vision.detectors import Detector
 from warden.vision.templates import TemplateLibrary
 
@@ -48,7 +48,8 @@ class CalibrationPage(QWidget):
         self._weapon_frame_store = None
         # Injectable so tests never write into the real checked-in templates/
         # folder - see warden-testing-safety memory for why this matters.
-        self._templates_root = templates_root or paths.repo_root()
+        self._templates_root = templates_root or paths.templates_home()
+        self._templates_fallbacks = [] if templates_root else [paths.repo_root()]
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -70,7 +71,8 @@ class CalibrationPage(QWidget):
                                "drag a box over the part that matters, then save a template "
                                "and/or apply it as that detector's color range and ROI."))
 
-        top_row = QHBoxLayout()
+        top_row_w = QWidget()
+        top_row = FlowLayout(top_row_w)
         self.screen_combo = QComboBox()
         self.screen_combo.addItems(list(DETECTOR_NAMES))
         top_row.addWidget(QLabel("Screen:"))
@@ -81,14 +83,14 @@ class CalibrationPage(QWidget):
         load_btn.clicked.connect(self._load_image)
         top_row.addWidget(capture_btn)
         top_row.addWidget(load_btn)
-        top_row.addStretch(1)
-        layout.addLayout(top_row)
+        layout.addWidget(top_row_w)
 
         self.canvas = ImageCanvas()
-        self.canvas.setMinimumHeight(360)
+        self.canvas.setMinimumHeight(200)
         layout.addWidget(self.canvas, 1)
 
-        action_row = QHBoxLayout()
+        action_row_w = QWidget()
+        action_row = FlowLayout(action_row_w)
         save_tpl_btn = QPushButton("Save selection as template")
         save_tpl_btn.clicked.connect(self._save_template)
         sample_btn = QPushButton("Sample HSV from selection")
@@ -99,18 +101,46 @@ class CalibrationPage(QWidget):
         detect_btn.clicked.connect(self._run_detection)
         for b in (save_tpl_btn, sample_btn, roi_btn, detect_btn):
             action_row.addWidget(b)
-        layout.addLayout(action_row)
+        layout.addWidget(action_row_w)
 
         self.result_label = muted("")
         layout.addWidget(self.result_label)
         return tab
 
-    def _capture_live(self) -> None:
+    def _library(self, subdir: str | None = None) -> TemplateLibrary:
+        base = self._templates_root / subdir if subdir else self._templates_root
+        fallbacks = [f / subdir if subdir else f for f in self._templates_fallbacks]
+        return TemplateLibrary(base, fallbacks=fallbacks)
+
+    def _grab_client(self):
+        """A frame of the Roblox client - from the running session if there
+        is one, otherwise straight from the window (no session needed, so
+        nothing gets clicked while you calibrate).
+        """
         loop = self.ctx.tick_loop
-        if loop is None or loop._client_rect is None:
-            self.result_label.setText("No live client window - start a session first, or load an image.")
+        if loop is not None and loop._client_rect is not None:
+            return loop.capturer.grab(loop._client_rect)
+        try:
+            from warden.vision.capture import grab_roblox_client
+
+            window = self.window()
+            window.showMinimized()  # don't capture Warden's own window on top of the game
+            try:
+                return grab_roblox_client()
+            finally:
+                window.showNormal()
+                window.raise_()
+                window.activateWindow()
+        except Exception:
+            return None
+
+    def _capture_live(self) -> None:
+        frame = self._grab_client()
+        if frame is None:
+            self.result_label.setText("Couldn't find the Roblox window - open Roblox (windowed is fine), "
+                                      "or load a screenshot instead.")
             return
-        self._frame = loop.capturer.grab(loop._client_rect)
+        self._frame = frame
         self.canvas.set_frame(self._frame)
         self.result_label.setText("Captured live frame.")
 
@@ -140,9 +170,23 @@ class CalibrationPage(QWidget):
         if sel is None:
             return
         name = self.screen_combo.currentText()
-        templates = TemplateLibrary(self._templates_root)
-        path = save_template_from_frame(templates, f"templates/{_weapon_template_path_for(name)}", self._frame, sel)
-        self.result_label.setText(f"Saved template: {path}")
+        templates = self._library()
+        cfg = self.ctx.app.detectors.get(name)
+        rel = cfg.template.path if (cfg is not None and cfg.template is not None) else \
+            f"templates/{_weapon_template_path_for(name)}"
+        path = save_template_from_frame(templates, rel, self._frame, sel)
+        note = ""
+        if cfg is not None and cfg.method in ("color", "template") and (cfg.method != "template" or cfg.template is None):
+            # A template was captured for a color detector (e.g. lobby_play):
+            # switch it to template matching, otherwise the capture is never used.
+            from warden.config.schema import TemplateSpec
+
+            self.ctx.app.detectors[name] = cfg.model_copy(update={
+                "method": "template", "template": TemplateSpec(path=rel, threshold=0.78),
+            })
+            self.ctx.save_app_config()
+            note = f" - '{name}' now uses this template for detection"
+        self.result_label.setText(f"Saved template: {path}{note}")
 
     def _sample_hsv(self) -> None:
         sel = self._selection_or_warn()
@@ -180,7 +224,7 @@ class CalibrationPage(QWidget):
         if cfg is None:
             self.result_label.setText(f"'{name}' has no detector config section yet.")
             return
-        templates = TemplateLibrary(self._templates_root)
+        templates = self._library()
         detector = Detector(name, cfg, templates)
         result = detector.evaluate(self._frame)
         if result.box:
@@ -203,7 +247,8 @@ class CalibrationPage(QWidget):
             "tightly around the weapon's tile - its icon and/or name."
         ))
 
-        top_row = QHBoxLayout()
+        top_row_w = QWidget()
+        top_row = FlowLayout(top_row_w)
         self.weapon_slot_combo = QComboBox()
         self.weapon_slot_combo.addItems(list(SLOTS))
         self.weapon_name_combo = QComboBox()
@@ -219,11 +264,10 @@ class CalibrationPage(QWidget):
         load_btn.clicked.connect(self._weapon_load_image)
         top_row.addWidget(capture_btn)
         top_row.addWidget(load_btn)
-        top_row.addStretch(1)
-        layout.addLayout(top_row)
+        layout.addWidget(top_row_w)
 
         self.weapon_canvas = ImageCanvas()
-        self.weapon_canvas.setMinimumHeight(360)
+        self.weapon_canvas.setMinimumHeight(200)
         layout.addWidget(self.weapon_canvas, 1)
 
         save_btn = QPushButton("Save selection as this weapon's template", objectName="Primary")
@@ -244,11 +288,12 @@ class CalibrationPage(QWidget):
         self.weapon_name_combo.addItems(names)
 
     def _weapon_capture_live(self) -> None:
-        loop = self.ctx.tick_loop
-        if loop is None or loop._client_rect is None:
-            self.weapon_result.setText("No live client window - start a session first, or load an image.")
+        frame = self._grab_client()
+        if frame is None:
+            self.weapon_result.setText("Couldn't find the Roblox window - open Roblox (windowed is fine), "
+                                       "or load a screenshot instead.")
             return
-        self._weapon_frame_store = loop.capturer.grab(loop._client_rect)
+        self._weapon_frame_store = frame
         self.weapon_canvas.set_frame(self._weapon_frame_store)
         self.weapon_result.setText("Captured live frame.")
 
@@ -276,7 +321,7 @@ class CalibrationPage(QWidget):
             self.weapon_result.setText("Type the weapon's name first (must match the preset exactly).")
             return
         slot = self.weapon_slot_combo.currentText()
-        templates = TemplateLibrary(self._templates_root / self.ctx.app.weapon_templates_dir)
+        templates = self._library(self.ctx.app.weapon_templates_dir)
         path = save_template_from_frame(templates, weapon_template_path(slot, name), self._weapon_frame_store, sel)
         self.weapon_result.setText(f"Saved: {path}")
 
@@ -289,7 +334,7 @@ class CalibrationPage(QWidget):
                                "Pick one, drag a region over the part that identifies it, "
                                "and turn it into a new template."))
 
-        body = QHBoxLayout()
+        body = ResponsiveRow(breakpoint=560)
         list_card, list_layout = card()
         list_layout.addWidget(section_label("Unknown frames"))
         self.gallery_list = QListWidget()
@@ -298,12 +343,13 @@ class CalibrationPage(QWidget):
         refresh_btn = QPushButton("Refresh")
         refresh_btn.clicked.connect(self._refresh_gallery)
         list_layout.addWidget(refresh_btn)
-        body.addWidget(list_card, 1)
+        body.add(list_card, 1)
 
         preview_card, preview_layout = card()
         self.gallery_canvas = ImageCanvas()
         preview_layout.addWidget(self.gallery_canvas, 1)
-        make_row = QHBoxLayout()
+        make_row_w = QWidget()
+        make_row = FlowLayout(make_row_w)
         self.gallery_name = QComboBox()
         self.gallery_name.setEditable(True)
         self.gallery_name.addItems(list(DETECTOR_NAMES))
@@ -311,11 +357,11 @@ class CalibrationPage(QWidget):
         make_btn.clicked.connect(self._make_template_from_gallery)
         make_row.addWidget(self.gallery_name)
         make_row.addWidget(make_btn)
-        preview_layout.addLayout(make_row)
+        preview_layout.addWidget(make_row_w)
         self.gallery_result = muted("")
         preview_layout.addWidget(self.gallery_result)
-        body.addWidget(preview_card, 2)
-        layout.addLayout(body)
+        body.add(preview_card, 2)
+        layout.addWidget(body, 1)
 
         self._refresh_gallery()
         return tab
@@ -340,7 +386,7 @@ class CalibrationPage(QWidget):
         if item is None or sel is None:
             self.gallery_result.setText("Pick a frame and drag a selection first.")
             return
-        templates = TemplateLibrary(self._templates_root)
+        templates = self._library()
         unknown_path = paths.data_dir("unknown") / item.text()
         template_path = f"templates/{self.gallery_name.currentText()}.png"
         try:

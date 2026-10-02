@@ -84,7 +84,15 @@ screen layout and color, not tuned to your actual screen, resolution, or scaling
    current capture.
 
 Repeat for each screen — each one is a couple of clicks once you've got the hang of
-it. The **Unknown gallery** tab (second tab) lists every screen Warden didn't
+it. You don't need to press Start to calibrate: **Capture live frame** grabs the
+Roblox window directly (Warden minimizes itself for a moment so it isn't in the
+shot). Saving a template for a color-based detector such as `lobby_play` switches
+that detector to template matching automatically.
+
+**The minimum to reach an FFA match:** `lobby_play`, `ffa_tile` (or `mode_list`) and
+`health_bar`. Pressing Start with any of those missing shows a "Calibration needed"
+prompt listing exactly what's missing. Captured templates are saved under
+`%LOCALAPPDATA%\Warden\templates\`, so they survive rebuilding the .exe. The **Unknown gallery** tab (second tab) lists every screen Warden didn't
 recognize during a real run; pick one, drag a region, and turn it into a new
 template the same way.
 
@@ -150,6 +158,16 @@ pause/resume/stop require it.
   and problem (e.g. `detectors.lobby_play.roi: x1 (0.7) must be less than x2
   (0.3)`). Fix the named file, or delete it to restore the shipped default (it gets
   re-seeded on the next launch).
+- **Roblox keeps rejoining / refreshing without ever opening FFA:** fixed on
+  2026-10-01. Starting with Roblox already open now takes over that client instead
+  of re-launching it, and a screen Warden can't recognize is retried in place
+  (Escape → lobby → Play again) instead of closing and relaunching the game. If it
+  still can't get past a step after a few retries and two relaunches, Warden
+  **pauses itself** and the event log names the screen that needs calibrating —
+  calibrate it, then press Resume.
+- **Window too small / text cut off:** the window scales its text and spacing down
+  with its size, rows of buttons wrap, side-by-side cards stack, and anything that
+  still doesn't fit scrolls.
 - **Recovery keeps failing / can't get back into a match:** the Leave/Reconnect
   button positions (`recovery_ui` in config.yaml) are uncalibrated placeholders too
   — these aren't on the Calibration wizard yet; for now, adjust them directly in

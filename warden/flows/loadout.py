@@ -81,6 +81,8 @@ class LoadoutTransaction:
         get_frame: Callable[[], np.ndarray | None],
         diagnostics_dir: Path | None = None,
         clock: Callable[[], float] = time.monotonic,
+        settle_s: float = 0.0,
+        verify_attempts: int = 1,
     ):
         self.actions = actions
         self.templates = templates
@@ -88,6 +90,13 @@ class LoadoutTransaction:
         self.get_frame = get_frame
         self.diagnostics_dir = diagnostics_dir
         self.clock = clock
+        # After any click the game needs a moment to redraw (tab switch
+        # animation, equip animation). Reading the screen immediately after a
+        # click sees the *old* picker, which used to make every freshly
+        # clicked weapon fail verification - so wait settle_s first, and give
+        # verification a few looks before declaring the slot failed.
+        self.settle_s = settle_s
+        self.verify_attempts = max(1, verify_attempts)
         self.reset(None)
 
     def reset(self, target: dict[str, str] | None) -> None:
@@ -96,8 +105,13 @@ class LoadoutTransaction:
         self._index = 0
         self._stage = "check"  # check -> tab -> search -> verify -> (next slot)
         self._scrolls = 0
+        self._settle_until = 0.0
+        self._verify_tries = 0
         self.result = LoadoutResult()
         self.done = len(self._order) == 0
+
+    def _clicked(self) -> None:
+        self._settle_until = self.clock() + self.settle_s
 
     @property
     def current_slot(self) -> str | None:
@@ -120,6 +134,9 @@ class LoadoutTransaction:
             self._finish_slot(slot, weapon, verified=False, fixed=False, reason="no template captured")
             return self.done
 
+        if self.settle_s and self.clock() < self._settle_until:
+            return self.done  # let the UI catch up with the last click
+
         frame = self.get_frame()
         if frame is None:
             return self.done  # nothing to do without a frame; try again next tick
@@ -133,6 +150,7 @@ class LoadoutTransaction:
 
         if self._stage == "tab":
             self.actions.click_frac(*slot_ui.tab, what=f"{slot} tab")
+            self._clicked()
             self._stage = "search"
             self._scrolls = 0
             return self.done
@@ -141,7 +159,9 @@ class LoadoutTransaction:
             match = match_template(frame, template, slot_ui.grid_roi.as_list(), scale_steps=7)
             if match is not None and match.score >= self.ui.verify_threshold:
                 self.actions.click_frac(*match.center, what=f"{slot} weapon tile ({weapon})")
+                self._clicked()
                 self._stage = "verify"
+                self._verify_tries = 0
                 return self.done
             if self._scrolls >= self.ui.max_search_scrolls:
                 self._finish_slot(slot, weapon, verified=False, fixed=False,
@@ -149,12 +169,16 @@ class LoadoutTransaction:
                 return self.done
             center = ((slot_ui.grid_roi.x1 + slot_ui.grid_roi.x2) / 2, (slot_ui.grid_roi.y1 + slot_ui.grid_roi.y2) / 2)
             self.actions.scroll(-self.ui.scroll_notches, at=center)
+            self._clicked()
             self._scrolls += 1
             return self.done
 
         if self._stage == "verify":
             if _verify(frame, slot_ui.verify_roi.as_list(), template, self.ui.verify_threshold):
                 self._finish_slot(slot, weapon, verified=True, fixed=True, scrolls_used=self._scrolls)
+            elif self._verify_tries + 1 < self.verify_attempts:
+                self._verify_tries += 1
+                self._clicked()  # look again after another settle period
             else:
                 self._finish_slot(slot, weapon, verified=False, fixed=False,
                                    reason="verification failed after click", scrolls_used=self._scrolls)

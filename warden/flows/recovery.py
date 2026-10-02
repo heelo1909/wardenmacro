@@ -52,6 +52,7 @@ class RecoverySequence:
         self.stats = RecoveryStats()
         self.stage = "idle"
         self._stage_started = 0.0
+        self.cause = ""
 
     def full_reset(self) -> None:
         """Call when the state machine reaches IN_MATCH - the incident is resolved."""
@@ -68,6 +69,8 @@ class RecoverySequence:
         once a relaunch has actually been kicked off this call.
         """
         now = self.clock() if now is None else now
+        if self.stage in ("idle", "handed_off"):
+            self.cause = cause
         if self.stage == "idle":
             self.stats.incident_start = now
             self.actions.on_incident(f"recovery_start:{cause}")
@@ -75,9 +78,15 @@ class RecoverySequence:
             self._stage_started = now
 
         if self.stage == "click_leave":
-            self.actions.click_leave_or_reconnect(self.cfg.prefer_button)
-            self.stage = "wait_leave"
-            self._stage_started = now
+            if self.cause in ("disconnect", "retry"):
+                # Only a real disconnect modal has a Leave/Reconnect button to
+                # press; clicking that spot on any other screen (stuck lobby,
+                # crashed client) would just be a stray click into the game.
+                self.actions.click_leave_or_reconnect(self.cfg.prefer_button)
+                self.stage = "wait_leave"
+                self._stage_started = now
+                return State.RECOVERING
+            self.stage = "close_process"
             return State.RECOVERING
 
         if self.stage == "wait_leave":

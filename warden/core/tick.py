@@ -20,7 +20,7 @@ from warden.core.events import EventBus
 from warden.core.state_machine import Signals, State, StateMachine, Transition
 from warden.core.persistence import PersistenceManager
 from warden.core.scheduler import Scheduler, ShutdownCountdown, power_action
-from warden.flows.calibration import parse_contract_hours
+from warden.flows.calibration import calibration_gaps, parse_contract_hours, template_library
 from warden.flows.loadout import LoadoutTransaction
 from warden.flows.recovery import RecoverySequence
 from warden.geometry import Rect
@@ -66,14 +66,29 @@ class LiveActions:
         self.bus = bus
         self.h = humanizer or Humanizer(app.timings.jitter_pct)
         self.detections: dict[str, Detection] = {}
+        # Set by TickLoop: grabs a *fresh* frame of the client. The loadout
+        # flow needs one after each click - the per-tick frame was captured
+        # before the click happened.
+        self.frame_grabber = None
         self.loadout = LoadoutTransaction(
-            self, weapon_templates, app.loadout_ui, get_frame=lambda: self.detections.get("_last_frame"),
+            self, weapon_templates, app.loadout_ui, get_frame=self._loadout_frame,
             diagnostics_dir=paths.data_dir("diagnostics") / "loadout",
+            settle_s=app.timings.ui_settle_s, verify_attempts=3,
         )
         self.recovery = RecoverySequence(self, app.recovery, clock=time.monotonic)
 
     def update_detections(self, detections: dict[str, Detection]) -> None:
         self.detections = detections
+
+    def _loadout_frame(self):
+        if self.frame_grabber is not None:
+            try:
+                frame = self.frame_grabber()
+                if frame is not None:
+                    return frame
+            except Exception:
+                log.exception("fresh frame grab failed; using the tick's frame")
+        return self.detections.get("_last_frame")
 
     # -- LoadoutActions (LoadoutTransaction calls back into us) --------------------
 
@@ -177,10 +192,13 @@ class LiveActions:
         brief enough that blocking a few ticks here is fine).
         """
         self._start_loadout_if_idle()
-        safety_cap = 500  # frame capture could stall; never block this thread forever
-        for _ in range(safety_cap):
+        # Never block this thread forever (capture could stall); each step
+        # grabs a fresh frame and the transaction itself waits out UI settle.
+        deadline = time.monotonic() + 12.0
+        while time.monotonic() < deadline:
             if self.loadout.tick():
                 break
+            time.sleep(0.05)
         self._emit("loadout.reapplied", f"post-respawn loadout check ({self.loadout.result.fixes} slot(s) fixed)")
         return self.loadout.result.fixes > 0
 
@@ -205,6 +223,9 @@ class LiveActions:
     def on_recovered(self) -> None:
         self.recovery.full_reset()
 
+    def on_stuck(self, message: str) -> None:
+        self._emit("session.stuck", message, "error")
+
 
 class TickLoop:
     def __init__(self, app: AppConfig, preset: Preset, bus: EventBus):
@@ -225,14 +246,17 @@ class TickLoop:
         )
         self.launcher = Launcher()
         self.process = RobloxProcess(send_close=self.window_backend.send_close)
-        weapon_templates = TemplateLibrary(paths.repo_root() / app.weapon_templates_dir)
+        weapon_templates = template_library(app.weapon_templates_dir)
         self.actions = LiveActions(app, preset, self.input, self.window_backend, self.launcher,
                                     self.process, self.focus_gate, weapon_templates, bus=bus,
                                     humanizer=self.humanizer)
 
         # Detector template paths (e.g. "templates/mode_list.png") are relative to the
         # repo root, not the weapons subfolder - a separate library, same cache behavior.
-        detector_templates = TemplateLibrary(paths.repo_root())
+        detector_templates = template_library()
+        self._detector_templates = detector_templates
+        self._weapon_templates = weapon_templates
+        self.actions.frame_grabber = self._grab_fresh
         self.detectors = build_detectors(app.detectors, detector_templates)
         self.frozen_detector = FrozenDetector(seconds=app.recovery.frozen_seconds)
 
@@ -242,6 +266,10 @@ class TickLoop:
             disconnect_confirm_seconds=app.recovery.confirm_seconds,
             recovery_confirm_gap=app.recovery.confirmation_gap_s,
             mode_select_scroll_attempts=app.input.mode_list_scroll_steps,
+            lobby_click_interval=app.timings.lobby_click_interval_s,
+            ffa_click_interval=app.timings.ffa_click_interval_s,
+            max_soft_resets=app.recovery.max_soft_resets,
+            max_stuck_relaunches=app.recovery.max_stuck_relaunches,
         )
 
         self._client_rect: Rect | None = None
@@ -289,6 +317,29 @@ class TickLoop:
                 on_screenshot=lambda: "screenshot requested",
             )
             self.bot_runner = DiscordBotRunner(db.token, commands)
+
+    def _grab_fresh(self):
+        if self._client_rect is None:
+            return None
+        return self.capturer.grab(self._client_rect)
+
+    def calibration_gaps(self) -> list[tuple[str, str]]:
+        return calibration_gaps(self.app, self.preset, self._detector_templates, self._weapon_templates)
+
+    def client_already_running(self) -> bool:
+        """A Roblox client is up with a visible window - attach instead of launching."""
+        try:
+            if not self.process.is_running():
+                return False
+            client = pick_client(self.window_backend.list_windows())
+        except Exception:
+            log.exception("couldn't check for a running client")
+            return False
+        if client is None:
+            return False
+        self.focus_gate.set_target(client.hwnd)
+        self._client_rect = client.client if not client.client.is_empty() else None
+        return True
 
     def status_snapshot(self) -> dict:
         return {
@@ -438,7 +489,13 @@ class TickLoop:
             self.lan_dashboard.start()
         if self.bot_runner is not None and self.bot_runner.available():
             threading.Thread(target=self._run_bot_safely, daemon=True, name="warden-discord-bot").start()
-        self.sm.start()
+        for severity, message in self.calibration_gaps():
+            self.bus.emit("calibration.missing", message, level="error" if severity == "error" else "warn")
+        attach = self.client_already_running()
+        if attach:
+            self.bus.emit("session.attach", "Roblox is already running - taking over the open client "
+                                            "instead of relaunching it", level="info")
+        self.sm.start(attach=attach)
 
         def loop():
             while not self._stop.is_set():

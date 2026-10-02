@@ -81,14 +81,28 @@ def match_template(
 class TemplateLibrary:
     """Loads template images relative to a base folder, reloading when the file changes."""
 
-    def __init__(self, base: Path):
+    def __init__(self, base: Path, fallbacks: Sequence[Path] = ()):
         self.base = Path(base)
+        # Read-only extra folders checked when a file isn't under ``base``
+        # (e.g. templates captured by an older build into the install folder).
+        self.fallbacks = [Path(f) for f in fallbacks if Path(f) != self.base]
         self._cache: dict[Path, tuple[float, np.ndarray]] = {}
         self._warned: set[Path] = set()
 
     def resolve(self, path: str) -> Path:
         p = Path(path)
-        return p if p.is_absolute() else self.base / p
+        if p.is_absolute():
+            return p
+        primary = self.base / p
+        if not primary.exists():
+            for root in self.fallbacks:
+                candidate = root / p
+                if candidate.exists():
+                    return candidate
+        return primary
+
+    def exists(self, path: str) -> bool:
+        return self.resolve(path).exists()
 
     def get(self, path: str) -> np.ndarray | None:
         full = self.resolve(path)
@@ -111,7 +125,8 @@ class TemplateLibrary:
         return img
 
     def save(self, path: str, image: np.ndarray) -> Path:
-        full = self.resolve(path)
+        p = Path(path)
+        full = p if p.is_absolute() else self.base / p  # always save to the primary folder
         full.parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(full), image)
         self._cache.pop(full, None)

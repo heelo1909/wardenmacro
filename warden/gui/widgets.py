@@ -4,8 +4,18 @@ themselves focused on layout/behavior instead of boilerplate styling.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import QPoint, QRect, QSize, Qt
+from PySide6.QtWidgets import (
+    QBoxLayout,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLayout,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 def card(margins: tuple[int, int, int, int] = (18, 16, 18, 16), spacing: int = 10) -> tuple[QFrame, QVBoxLayout]:
@@ -45,6 +55,9 @@ class StatTile(QFrame):
         self.value_label.setObjectName("StatValue")
         self.caption_label = QLabel(caption.upper())
         self.caption_label.setObjectName("Muted")
+        self.caption_label.setWordWrap(True)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         layout.addWidget(self.value_label)
         layout.addWidget(self.caption_label)
 
@@ -93,7 +106,8 @@ class ImageCanvas(QLabel):
 
     def __init__(self):
         super().__init__()
-        self.setMinimumSize(320, 180)
+        self.setMinimumSize(240, 135)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setStyleSheet("background:#000; border-radius:8px;")
         self._frame_size: tuple[int, int] | None = None  # (w, h) of the original frame
         self._pixmap = None  # the original, full-resolution QPixmap
@@ -191,3 +205,172 @@ def row(*widgets: QWidget, stretch_last: bool = False, spacing: int = 10) -> QWi
     if stretch_last:
         layout.addStretch(1)
     return container
+
+
+# --------------------------------------------------------------------------- responsive layout helpers
+#
+# The window has to stay usable on small/low-resolution monitors: nothing may
+# be clipped, so rows of buttons wrap onto a new line, side-by-side cards
+# stack vertically when there isn't room, and tiles reflow into fewer columns.
+
+
+class FlowLayout(QLayout):
+    """Lays children out left-to-right, wrapping onto new lines as needed."""
+
+    def __init__(self, parent: QWidget | None = None, spacing: int = 8):
+        super().__init__(parent)
+        self._items = []
+        self._spacing = spacing
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item) -> None:  # noqa: N802 (Qt API)
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int):  # noqa: N802
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index: int):  # noqa: N802
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self):  # noqa: N802
+        return Qt.Orientations(0)
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        return self._do_layout(QRect(0, 0, width, 0), test_only=True)
+
+    def setGeometry(self, rect: QRect) -> None:  # noqa: N802
+        super().setGeometry(rect)
+        self._do_layout(rect, test_only=False)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return self.minimumSize()
+
+    def minimumSize(self) -> QSize:  # noqa: N802
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        m = self.contentsMargins()
+        return size + QSize(m.left() + m.right(), m.top() + m.bottom())
+
+    def _do_layout(self, rect: QRect, test_only: bool) -> int:
+        m = self.contentsMargins()
+        area = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
+        x, y, line_h = area.x(), area.y(), 0
+        for item in self._items:
+            if item.widget() is not None and item.widget().isHidden():
+                continue
+            hint = item.sizeHint()
+            w = min(hint.width(), max(area.width(), 1))
+            if x > area.x() and x + w > area.right() + 1:
+                x = area.x()
+                y += line_h + self._spacing
+                line_h = 0
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), QSize(w, hint.height())))
+            x += w + self._spacing
+            line_h = max(line_h, hint.height())
+        return y + line_h - rect.y() + m.bottom()
+
+
+def flow(*widgets: QWidget, spacing: int = 8) -> QWidget:
+    """A container whose children wrap onto extra lines when the window is narrow."""
+    container = QWidget()
+    layout = FlowLayout(container, spacing=spacing)
+    for w in widgets:
+        layout.addWidget(w)
+    sp = container.sizePolicy()
+    sp.setHeightForWidth(True)
+    container.setSizePolicy(sp)
+    return container
+
+
+class ResponsiveRow(QWidget):
+    """Children side by side when wide enough, stacked vertically when not."""
+
+    def __init__(self, breakpoint: int = 760, spacing: int = 16):
+        super().__init__()
+        self.breakpoint = breakpoint
+        self._layout = QBoxLayout(QBoxLayout.LeftToRight, self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(spacing)
+
+    def add(self, widget: QWidget, stretch: int = 1) -> None:
+        self._layout.addWidget(widget, stretch)
+
+    def is_stacked(self) -> bool:
+        return self._layout.direction() == QBoxLayout.TopToBottom
+
+    def _children(self) -> list[QWidget]:
+        out = []
+        for i in range(self._layout.count()):
+            w = self._layout.itemAt(i).widget()
+            if w is not None and not w.isHidden():
+                out.append(w)
+        return out
+
+    def _side_by_side_min(self) -> int:
+        kids = self._children()
+        return sum(k.minimumSizeHint().width() for k in kids) + self._layout.spacing() * max(len(kids) - 1, 0)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        # Only as wide as the widest child: the row can always stack instead
+        # of forcing a horizontal scrollbar on a narrow window.
+        kids = self._children()
+        width = max((k.minimumSizeHint().width() for k in kids), default=0)
+        return QSize(width, super().minimumSizeHint().height())
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        narrow = self.width() < max(self.breakpoint, self._side_by_side_min())
+        direction = QBoxLayout.TopToBottom if narrow else QBoxLayout.LeftToRight
+        if self._layout.direction() != direction:
+            self._layout.setDirection(direction)
+            self.updateGeometry()
+
+
+class ResponsiveGrid(QWidget):
+    """Equal-width tiles that reflow into as many columns as fit."""
+
+    def __init__(self, min_item_width: int = 130, max_columns: int = 6, spacing: int = 10):
+        super().__init__()
+        self.min_item_width = min_item_width
+        self.max_columns = max_columns
+        self._items: list[QWidget] = []
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setSpacing(spacing)
+        self._columns = 0
+
+    def add(self, widget: QWidget) -> None:
+        self._items.append(widget)
+        self._relayout(force=True)
+
+    def columns(self) -> int:
+        return self._columns
+
+    def _relayout(self, force: bool = False) -> None:
+        width = max(self.width(), 1)
+        spacing = self._grid.spacing()
+        n = len(self._items) or 1
+        fit = max(1, min(self.max_columns, n, (width + spacing) // max(self.min_item_width + spacing, 1)))
+        rows = -(-n // fit)
+        cols = -(-n // rows)  # balance the rows: 6 tiles -> 6, 3x2 or 2x3, never 5+1
+        if cols == self._columns and not force:
+            return
+        self._columns = cols
+        for w in self._items:
+            self._grid.removeWidget(w)
+        for c in range(self.max_columns):
+            self._grid.setColumnStretch(c, 1 if c < cols else 0)
+        for i, w in enumerate(self._items):
+            self._grid.addWidget(w, i // cols, i % cols)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._relayout()

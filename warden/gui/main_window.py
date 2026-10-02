@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QFrame,
+    QMessageBox,
+    QScrollArea,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -36,15 +40,48 @@ log = logging.getLogger(__name__)
 
 PAGES = ("Home", "Loadout", "Settings", "Calibration", "History", "Diagnostics")
 
+# The layout is designed at this size; smaller windows scale fonts/spacing
+# down (never below MIN_SCALE) and anything that still doesn't fit scrolls.
+DESIGN_SIZE = (1120, 740)
+MIN_SCALE, MAX_SCALE = 0.72, 1.2
+SIDEBAR_WIDTH = 196
+
+
+def ui_scale_for(width: int, height: int) -> float:
+    """Font/spacing scale for a window of this size, in 0.04 steps so a
+    drag-resize doesn't restyle the whole app on every pixel.
+    """
+    raw = min(width / DESIGN_SIZE[0], height / DESIGN_SIZE[1])
+    raw = min(max(raw, MIN_SCALE), MAX_SCALE)
+    return round(round(raw / 0.04) * 0.04, 2)
+
+
+def _scrollable(page: QWidget) -> QScrollArea:
+    area = QScrollArea(objectName="PageScroll")
+    area.setWidgetResizable(True)
+    page.setObjectName(page.objectName() or "Page")
+    area.setFrameShape(QFrame.NoFrame)
+    area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    area.setWidget(page)
+    return area
+
 
 class MainWindow(QMainWindow):
+    # Global hotkeys fire on pynput's own thread; Qt widgets may only be
+    # touched from the GUI thread, so hotkeys go through this queued signal.
+    hotkey_pressed = Signal(str)
+
     def __init__(self, config: LoadedConfig | None = None, bus=None):
         super().__init__()
         self.config = config
         self.setWindowTitle(f"{APP_NAME} {__version__}")
-        self.resize(1120, 720)
-        self.setMinimumSize(880, 560)
-        self.setStyleSheet(theme.stylesheet())
+        self.setMinimumSize(560, 400)
+        self._fit_to_screen()
+        self._scale = 0.0  # forces the first _apply_scale() to style everything
+        self._scale_timer = QTimer(self)
+        self._scale_timer.setSingleShot(True)
+        self._scale_timer.setInterval(60)
+        self._scale_timer.timeout.connect(self._apply_scale)
 
         self.ctx: AppContext | None = None
         self._incidents: list[str] = []
@@ -58,7 +95,8 @@ class MainWindow(QMainWindow):
         row.setSpacing(0)
 
         sidebar = QWidget(objectName="Sidebar")
-        sidebar.setFixedWidth(196)
+        self.sidebar = sidebar
+        sidebar.setFixedWidth(SIDEBAR_WIDTH)
         side = QVBoxLayout(sidebar)
         side.setContentsMargins(0, 0, 0, 12)
         side.setSpacing(0)
@@ -94,7 +132,8 @@ class MainWindow(QMainWindow):
             button.setCursor(Qt.PointingHandCursor)
             self.nav.addButton(button, index)
             side.addWidget(button)
-            self.stack.addWidget(pages[name])
+            self.stack.addWidget(_scrollable(pages[name]))
+        self.pages = pages
         self.nav.idClicked.connect(self.stack.setCurrentIndex)
         self.nav.button(0).setChecked(True)
         side.addStretch(1)
@@ -109,16 +148,59 @@ class MainWindow(QMainWindow):
         preset = config.preset.name if config else "-"
         self.statusBar().showMessage(f"Ready  ·  preset: {preset}")
 
+        self._apply_scale()
+
         if config is not None:
             self._setup_hotkeys()
+
+    # -- responsive scaling -------------------------------------------------------
+
+    def _fit_to_screen(self) -> None:
+        """Open at the design size, or 90% of the screen if that's smaller."""
+        width, height = DESIGN_SIZE
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            width = min(width, int(avail.width() * 0.9))
+            height = min(height, int(avail.height() * 0.9))
+        self.resize(max(width, self.minimumWidth()), max(height, self.minimumHeight()))
+
+    @property
+    def ui_scale(self) -> float:
+        return self._scale
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._scale_timer.start()
+
+    def _apply_scale(self) -> None:
+        scale = ui_scale_for(self.width(), self.height())
+        if scale == self._scale:
+            return
+        self._scale = scale
+        self.setStyleSheet(theme.stylesheet(scale))
+        # Narrow windows get a narrower sidebar too, leaving room for the page.
+        self.sidebar.setFixedWidth(int(SIDEBAR_WIDTH * min(scale, 1.0)))
+        margin_x, margin_y = int(28 * scale), int(24 * scale)
+        for page in getattr(self, "pages", {}).values():
+            if page.layout() is not None:
+                page.layout().setContentsMargins(margin_x, margin_y, margin_x, margin_y)
+                page.layout().setSpacing(int(16 * scale))
+            if hasattr(page, "apply_scale"):
+                page.apply_scale(scale)
 
     # -- hotkeys -------------------------------------------------------
 
     def _setup_hotkeys(self) -> None:
         hk = self.config.app.hotkeys
+        actions = {"start": self._hotkey_start, "pause": self._toggle_pause,
+                   "stop": self._stop, "screenshot": self._screenshot}
+        self.hotkey_pressed.connect(lambda name: actions[name](), Qt.QueuedConnection)
         self._hotkeys = Hotkeys({
-            hk.start: self._start, hk.pause: self._toggle_pause,
-            hk.stop: self._stop, hk.screenshot: self._screenshot,
+            hk.start: lambda: self.hotkey_pressed.emit("start"),
+            hk.pause: lambda: self.hotkey_pressed.emit("pause"),
+            hk.stop: lambda: self.hotkey_pressed.emit("stop"),
+            hk.screenshot: lambda: self.hotkey_pressed.emit("screenshot"),
         })
         self._hotkeys.start()
 
@@ -131,11 +213,13 @@ class MainWindow(QMainWindow):
 
     # -- session control (also reachable via hotkeys) -------------------------------------------------------
 
-    def _start(self) -> None:
+    def _start(self, ask: bool = True) -> None:
         if self.ctx is None:
             return
         self._incidents.clear()
         loop = self.ctx.ensure_tick_loop()
+        if ask and not self._confirm_calibration(loop):
+            return
         loop.start()
         if self.mini_overlay is not None:
             self.mini_overlay.mark_started()
@@ -145,6 +229,63 @@ class MainWindow(QMainWindow):
         if self.config.app.gui.minimize_on_start:
             self.showMinimized()
         self.statusBar().showMessage("Running")
+
+    def _hotkey_start(self) -> None:
+        if self.ctx is not None and self.ctx.tick_loop is not None and self.ctx.tick_loop._session_active:
+            return  # already running - a second Start press must not rebuild/relaunch
+        if self.home_page is not None:
+            self.home_page._handle_start()  # keeps the Home buttons/timer in sync
+        else:
+            self._start()
+
+    def _confirm_calibration(self, loop) -> bool:
+        """If screens the lobby -> FFA path depends on were never calibrated,
+        say so up front instead of letting the run time out and relaunch.
+        """
+        try:
+            gaps = loop.calibration_gaps()
+        except Exception:
+            log.exception("calibration check failed")
+            return True
+        blocking = [m for sev, m in gaps if sev == "error"]
+        minor = [m for sev, m in gaps if sev != "error"]
+        if not blocking:
+            return True
+        choice = self._ask_calibration(blocking, minor)
+        if choice == "calibrate":
+            index = PAGES.index("Calibration")
+            self.nav.button(index).setChecked(True)
+            self.stack.setCurrentIndex(index)
+        if choice != "start":
+            self._reset_home_buttons()
+            return False
+        return True
+
+    def _ask_calibration(self, blocking: list[str], minor: list[str]) -> str:
+        """Modal prompt -> "calibrate" | "start" | "cancel". Tests replace this."""
+        text = ("Warden can't get into an FFA match yet - these screens haven't been calibrated "
+                "for your monitor:\n\n" + "\n".join(f"•  {m}" for m in blocking))
+        if minor:
+            text += "\n\nAlso missing (weapons/respawn won't be handled):\n" + "\n".join(f"•  {m}" for m in minor)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Calibration needed")
+        box.setText(text)
+        calibrate = box.addButton("Open Calibration", QMessageBox.AcceptRole)
+        start = box.addButton("Start anyway", QMessageBox.DestructiveRole)
+        box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(calibrate)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is calibrate:
+            return "calibrate"
+        if clicked is start:
+            return "start"
+        return "cancel"
+
+    def _reset_home_buttons(self) -> None:
+        if self.home_page is not None and hasattr(self.home_page, "reset_controls"):
+            self.home_page.reset_controls()
 
     def _toggle_pause(self) -> None:
         if self.ctx is None or self.ctx.tick_loop is None:
@@ -204,6 +345,10 @@ class MainWindow(QMainWindow):
     def _on_bus_event(self, event: Event) -> None:
         if event.topic == "incident":
             self._incidents.append(event.message)
+        elif event.topic == "session.stuck":
+            self._incidents.append(event.message)
+            self.showNormal()
+            self.statusBar().showMessage("Paused - calibration needed (see the event log)")
         elif event.topic == "schedule.target_reached":
             self._handle_target_reached(event.data.get("preset_id"))
 
@@ -221,7 +366,7 @@ class MainWindow(QMainWindow):
             self.home_page._refresh_loadout_card()
             self.home_page._refresh_contract_label()
             self.home_page._refresh_resume_banner()
-        self._start()
+        self._start(ask=False)  # unattended queue advance: never block on a dialog
 
 
 def _placeholder_page(title: str) -> QWidget:

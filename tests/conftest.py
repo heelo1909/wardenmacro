@@ -21,3 +21,15 @@ def warden_home(tmp_path, monkeypatch):
 @pytest.fixture
 def bundled_config():
     return ROOT / "config"
+
+
+@pytest.fixture(autouse=True)
+def _no_calibration_prompt(monkeypatch):
+    """MainWindow asks before starting with uncalibrated screens - a modal
+    dialog that would block a headless test forever. Tests answer "start".
+    """
+    try:
+        from warden.gui import main_window
+    except Exception:  # PySide6 not installed / no GUI libs
+        return
+    monkeypatch.setattr(main_window.MainWindow, "_ask_calibration", lambda self, blocking, minor: "start")

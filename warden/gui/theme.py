@@ -16,32 +16,46 @@ ERROR = "#E5534B"
 FONT_STACK = '"Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", "Inter", sans-serif'
 
 
-def stylesheet() -> str:
+def stylesheet(scale: float = 1.0) -> str:
+    """The app stylesheet with every font size and spacing multiplied by
+    ``scale``, so the whole UI (text included) shrinks with the window on a
+    small monitor instead of getting clipped. MainWindow picks the scale.
+    """
+
+    def _pt(v: float) -> str:
+        return f"{max(v * scale, 6.0):.1f}"
+
+    def _px(v: int) -> int:
+        return max(int(round(v * scale)), 1 if v else 0)
+
     return f"""
     * {{
         font-family: {FONT_STACK};
-        font-size: 10pt;
+        font-size: {_pt(10)}pt;
         color: {TEXT};
     }}
     QMainWindow, QWidget#Root {{
         background: {BG};
     }}
+    QScrollArea#PageScroll, QScrollArea#PageScroll > QWidget, QWidget#Page {{
+        background: {BG};
+    }}
     QWidget#Sidebar {{
         background: {BG};
-        border-right: 1px solid {BORDER};
+        border-right: {_px(1)}px solid {BORDER};
     }}
     QLabel#Wordmark {{
-        font-size: 15pt;
+        font-size: {_pt(15)}pt;
         font-weight: 600;
         color: {ACCENT};
-        padding: 18px 18px 14px 18px;
+        padding: {_px(18)}px {_px(18)}px {_px(14)}px {_px(18)}px;
     }}
     QPushButton#NavButton {{
         background: transparent;
         border: none;
-        border-radius: 8px;
-        padding: 9px 14px;
-        margin: 2px 10px;
+        border-radius: {_px(8)}px;
+        padding: {_px(9)}px {_px(14)}px;
+        margin: {_px(2)}px {_px(10)}px;
         text-align: left;
         color: {TEXT_MUTED};
     }}
@@ -52,15 +66,15 @@ def stylesheet() -> str:
     QPushButton#NavButton:checked {{
         background: {CARD};
         color: {TEXT};
-        border-left: 3px solid {ACCENT};
+        border-left: {_px(3)}px solid {ACCENT};
     }}
     QFrame#Card {{
         background: {CARD};
-        border: 1px solid {BORDER};
-        border-radius: 12px;
+        border: {_px(1)}px solid {BORDER};
+        border-radius: {_px(12)}px;
     }}
     QLabel#PageTitle {{
-        font-size: 18pt;
+        font-size: {_pt(18)}pt;
         font-weight: 600;
     }}
     QLabel#Muted {{
@@ -68,21 +82,25 @@ def stylesheet() -> str:
     }}
     QLabel#Section {{
         color: {TEXT_MUTED};
-        font-size: 8pt;
+        font-size: {_pt(8)}pt;
         font-weight: 600;
-        letter-spacing: 1px;
+        letter-spacing: {_px(1)}px;
     }}
     QLabel#StatValue {{
-        font-size: 17pt;
+        font-size: {_pt(17)}pt;
+        font-weight: 600;
+    }}
+    QLabel#BigValue {{
+        font-size: {_pt(24)}pt;
         font-weight: 600;
     }}
     QLabel#StatusChip {{
-        border-radius: 10px;
-        padding: 4px 14px;
+        border-radius: {_px(10)}px;
+        padding: {_px(4)}px {_px(14)}px;
         font-weight: 600;
         background: {CARD_HOVER};
         color: {TEXT_MUTED};
-        max-width: 110px;
+        max-width: {_px(110)}px;
     }}
     QLabel#StatusChip[tone="success"] {{
         background: rgba(63, 185, 122, 0.18);
@@ -98,9 +116,9 @@ def stylesheet() -> str:
     }}
     QPushButton {{
         background: {CARD_HOVER};
-        border: 1px solid {BORDER};
-        border-radius: 8px;
-        padding: 7px 16px;
+        border: {_px(1)}px solid {BORDER};
+        border-radius: {_px(8)}px;
+        padding: {_px(7)}px {_px(16)}px;
     }}
     QPushButton:hover {{
         border-color: {ACCENT};
@@ -117,17 +135,17 @@ def stylesheet() -> str:
     QStatusBar {{
         background: {BG};
         color: {TEXT_MUTED};
-        border-top: 1px solid {BORDER};
+        border-top: {_px(1)}px solid {BORDER};
     }}
     QListWidget, QTableWidget, QPlainTextEdit, QTextEdit {{
         background: {BG};
         color: {TEXT};
-        border: 1px solid {BORDER};
-        border-radius: 8px;
-        padding: 4px;
+        border: {_px(1)}px solid {BORDER};
+        border-radius: {_px(8)}px;
+        padding: {_px(4)}px;
     }}
     QListWidget::item, QTableWidget::item {{
-        padding: 3px 4px;
+        padding: {_px(3)}px {_px(4)}px;
         border: none;
     }}
     QListWidget::item:selected, QTableWidget::item:selected {{
@@ -138,15 +156,15 @@ def stylesheet() -> str:
         background: {CARD};
         color: {TEXT_MUTED};
         border: none;
-        border-bottom: 1px solid {BORDER};
-        padding: 4px 6px;
+        border-bottom: {_px(1)}px solid {BORDER};
+        padding: {_px(4)}px {_px(6)}px;
     }}
     QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
         background: {BG};
         color: {TEXT};
-        border: 1px solid {BORDER};
-        border-radius: 6px;
-        padding: 4px 8px;
+        border: {_px(1)}px solid {BORDER};
+        border-radius: {_px(6)}px;
+        padding: {_px(4)}px {_px(8)}px;
         selection-background-color: {ACCENT};
     }}
     QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
@@ -154,23 +172,23 @@ def stylesheet() -> str:
     }}
     QComboBox::drop-down {{
         border: none;
-        width: 18px;
+        width: {_px(18)}px;
     }}
     QComboBox QAbstractItemView {{
         background: {CARD};
         color: {TEXT};
         selection-background-color: {CARD_HOVER};
-        border: 1px solid {BORDER};
+        border: {_px(1)}px solid {BORDER};
         outline: none;
     }}
     QCheckBox {{
-        spacing: 8px;
+        spacing: {_px(8)}px;
     }}
     QCheckBox::indicator {{
-        width: 16px;
-        height: 16px;
-        border-radius: 4px;
-        border: 1px solid {BORDER};
+        width: {_px(16)}px;
+        height: {_px(16)}px;
+        border-radius: {_px(4)}px;
+        border: {_px(1)}px solid {BORDER};
         background: {BG};
     }}
     QCheckBox::indicator:checked {{
@@ -181,15 +199,55 @@ def stylesheet() -> str:
         border: none;
         background: transparent;
     }}
+    QTabWidget::pane {{
+        background: {CARD};
+        border: {_px(1)}px solid {BORDER};
+        border-radius: {_px(10)}px;
+        top: -{_px(1)}px;
+    }}
+    QTabWidget > QWidget > QWidget {{
+        background: {CARD};
+    }}
+    QTabBar::tab {{
+        background: {BG};
+        color: {TEXT_MUTED};
+        border: {_px(1)}px solid {BORDER};
+        border-bottom: none;
+        border-top-left-radius: {_px(8)}px;
+        border-top-right-radius: {_px(8)}px;
+        padding: {_px(6)}px {_px(14)}px;
+        margin-right: {_px(2)}px;
+    }}
+    QTabBar::tab:selected {{
+        background: {CARD};
+        color: {TEXT};
+        border-color: {ACCENT};
+    }}
+    QTabBar::tab:hover {{
+        color: {TEXT};
+    }}
+    QScrollBar:horizontal {{
+        background: transparent;
+        height: {_px(10)}px;
+        margin: 0;
+    }}
+    QScrollBar::handle:horizontal {{
+        background: {CARD_HOVER};
+        border-radius: {_px(5)}px;
+        min-width: {_px(24)}px;
+    }}
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+        width: 0;
+    }}
     QScrollBar:vertical {{
         background: transparent;
-        width: 10px;
+        width: {_px(10)}px;
         margin: 0;
     }}
     QScrollBar::handle:vertical {{
         background: {CARD_HOVER};
-        border-radius: 5px;
-        min-height: 24px;
+        border-radius: {_px(5)}px;
+        min-height: {_px(24)}px;
     }}
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
         height: 0;

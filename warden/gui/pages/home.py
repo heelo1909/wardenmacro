@@ -24,7 +24,17 @@ from warden.core.events import Event, Level
 from warden.core.state_machine import State
 from warden.gui.bridge import BusBridge
 from warden.gui.context import AppContext
-from warden.gui.widgets import StatTile, StatusChip, card, muted, page_header, row, section_label
+from warden.gui.widgets import (
+    ResponsiveGrid,
+    ResponsiveRow,
+    StatTile,
+    StatusChip,
+    card,
+    flow,
+    muted,
+    page_header,
+    section_label,
+)
 
 STATE_TO_CHIP = {
     State.IDLE: "ready", State.STOPPED: "stopped", State.PAUSED: "paused",
@@ -36,6 +46,7 @@ STATE_TO_CHIP = {
 }
 
 _LEVEL_ORDER = ["debug", "info", "success", "warn", "error"]
+_THUMB_SIZE = (220, 130)
 
 
 class HomePage(QWidget):
@@ -52,6 +63,7 @@ class HomePage(QWidget):
         self._in_match_seconds = 0.0
         self._last_sample = time.monotonic()
         self._verbose = False
+        self._banked_at_start = 0.0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -68,7 +80,7 @@ class HomePage(QWidget):
         self.pause_btn.clicked.connect(self._handle_pause)
         self.stop_btn.clicked.connect(self._handle_stop)
         self.status_chip = StatusChip()
-        controls = row(self.start_btn, self.pause_btn, self.stop_btn, self.status_chip, stretch_last=True)
+        controls = flow(self.start_btn, self.pause_btn, self.stop_btn, self.status_chip)
         layout.addWidget(controls)
 
         # -- resume banner (section 9: "On next launch, Home offers Resume last session") ---
@@ -77,6 +89,7 @@ class HomePage(QWidget):
         banner_layout.setContentsMargins(0, 0, 0, 0)
         self.resume_label = QLabel("")
         self.resume_label.setObjectName("Muted")
+        self.resume_label.setWordWrap(True)
         resume_btn = QPushButton("Resume")
         resume_btn.clicked.connect(self._handle_start)
         banner_layout.addWidget(self.resume_label, 1)
@@ -88,8 +101,7 @@ class HomePage(QWidget):
         # -- timer + contract progress ---------------------------------------------------
         top_card, top_layout = card()
         timers_row = QHBoxLayout()
-        self.session_timer_label = QLabel("00:00:00", objectName="StatValue")
-        self.session_timer_label.setStyleSheet("font-size: 24pt;")
+        self.session_timer_label = QLabel("00:00:00", objectName="BigValue")
         timer_col = QVBoxLayout()
         timer_col.addWidget(section_label("Session"))
         timer_col.addWidget(self.session_timer_label)
@@ -108,22 +120,20 @@ class HomePage(QWidget):
         # -- counters ---------------------------------------------------
         counters_card, counters_layout = card()
         counters_layout.addWidget(section_label("Counters"))
-        grid = QGridLayout()
-        grid.setSpacing(10)
+        self.tile_grid = ResponsiveGrid(min_item_width=120, max_columns=6)
         self.tiles = {
             "respawns": StatTile("Respawns"), "reconnects": StatTile("Reconnects"),
             "re_queues": StatTile("Re-queues"), "loadout_fixes": StatTile("Loadout fixes"),
             "time_lost": StatTile("Time lost"), "uptime": StatTile("In-match uptime"),
         }
-        for i, tile in enumerate(self.tiles.values()):
-            grid.addWidget(tile, 0, i)
-        counters_layout.addLayout(grid)
+        for tile in self.tiles.values():
+            self.tile_grid.add(tile)
+        counters_layout.addWidget(self.tile_grid)
         layout.addWidget(counters_card)
 
         # -- automation toggles ---------------------------------------------------
         auto_card, auto_layout = card()
         auto_layout.addWidget(section_label("Automation"))
-        auto_row = QHBoxLayout()
         self.toggles: dict[str, QCheckBox] = {}
         for key, label in (("auto_reconnect", "Auto reconnect"), ("respawn_recovery", "Respawn recovery"),
                            ("auto_requeue", "Auto re-queue"), ("abilities", "Abilities"),
@@ -132,43 +142,46 @@ class HomePage(QWidget):
             box.setChecked(getattr(ctx.app.automation, key))
             box.toggled.connect(lambda checked, k=key: self._set_automation(k, checked))
             self.toggles[key] = box
-            auto_row.addWidget(box)
-        auto_row.addStretch(1)
-        auto_layout.addLayout(auto_row)
+        auto_layout.addWidget(flow(*self.toggles.values(), spacing=14))
         layout.addWidget(auto_card)
 
         # -- loadout card + presets ---------------------------------------------------
-        mid_row = QHBoxLayout()
+        mid_row = ResponsiveRow(breakpoint=620)
+        self.mid_row = mid_row
         loadout_card, loadout_layout = card()
         loadout_layout.addWidget(section_label("Active loadout"))
         self.slot_labels = {}
         for slot in ("primary", "secondary", "melee", "utility"):
             lbl = QLabel(f"{slot.title()}: -")
+            lbl.setWordWrap(True)
             self.slot_labels[slot] = lbl
             loadout_layout.addWidget(lbl)
-        mid_row.addWidget(loadout_card, 1)
+        mid_row.add(loadout_card, 1)
 
         presets_card, presets_layout = card()
         presets_layout.addWidget(section_label("Quick presets"))
-        preset_row = QHBoxLayout()
+        preset_buttons = []
         for preset_id in ctx.available_presets():
             btn = QPushButton(preset_id.replace("_", " ").title())
             btn.clicked.connect(lambda _, p=preset_id: self._switch_preset(p))
-            preset_row.addWidget(btn)
-        presets_layout.addLayout(preset_row)
-        mid_row.addWidget(presets_card, 1)
-        layout.addLayout(mid_row)
+            preset_buttons.append(btn)
+        presets_layout.addWidget(flow(*preset_buttons))
+        presets_layout.addStretch(1)
+        mid_row.add(presets_card, 1)
+        layout.addWidget(mid_row)
 
         # -- thumbnail + log ---------------------------------------------------
-        bottom_row = QHBoxLayout()
+        bottom_row = ResponsiveRow(breakpoint=640)
+        self.bottom_row = bottom_row
         thumb_card, thumb_layout = card()
         thumb_layout.addWidget(section_label("Roblox window"))
         self.thumbnail = QLabel("(not running)")
-        self.thumbnail.setFixedSize(220, 130)
+        self.thumbnail.setFixedSize(*_THUMB_SIZE)
         self.thumbnail.setAlignment(Qt.AlignCenter)
         self.thumbnail.setStyleSheet("background:#000; border-radius:8px; color:#666;")
-        thumb_layout.addWidget(self.thumbnail)
-        bottom_row.addWidget(thumb_card)
+        thumb_layout.addWidget(self.thumbnail, 0, Qt.AlignHCenter)
+        thumb_layout.addStretch(1)
+        bottom_row.add(thumb_card, 0)
 
         log_card, log_layout = card()
         log_header = QHBoxLayout()
@@ -182,10 +195,12 @@ class HomePage(QWidget):
         log_header.addWidget(self.verbose_box)
         log_layout.addLayout(log_header)
         self.log_list = QListWidget()
-        self.log_list.setMaximumHeight(160)
+        self.log_list.setWordWrap(True)
+        self.log_list.setMinimumHeight(90)
+        self.log_list.setMaximumHeight(200)
         log_layout.addWidget(self.log_list)
-        bottom_row.addWidget(log_card, 1)
-        layout.addLayout(bottom_row)
+        bottom_row.add(log_card, 1)
+        layout.addWidget(bottom_row)
         layout.addStretch(1)
 
         self._refresh_loadout_card()
@@ -201,6 +216,7 @@ class HomePage(QWidget):
     # -- actions -------------------------------------------------------
 
     def _handle_start(self) -> None:
+        self._banked_at_start = self.ctx.contract_banked_hours()
         self._session_start = time.monotonic()
         self._paused_total = 0.0
         self._in_match_seconds = 0.0
@@ -228,6 +244,21 @@ class HomePage(QWidget):
             self.pause_btn.setText("Resume")
             if self._on_pause:
                 self._on_pause()
+
+    def reset_controls(self) -> None:
+        """Back to the not-running button state (e.g. Start was cancelled)."""
+        self._session_start = None
+        self.start_btn.setEnabled(True)
+        self.pause_btn.setEnabled(False)
+        self.pause_btn.setText("Pause")
+        self.stop_btn.setEnabled(False)
+
+    def apply_scale(self, scale: float) -> None:
+        """Called by MainWindow when the window size changes the UI scale."""
+        self.thumbnail.setFixedSize(int(_THUMB_SIZE[0] * scale), int(_THUMB_SIZE[1] * scale))
+        self.tile_grid.min_item_width = int(120 * scale)
+        self.mid_row.breakpoint = int(620 * scale)
+        self.bottom_row.breakpoint = int(640 * scale)
 
     def _handle_stop(self) -> None:
         self.start_btn.setEnabled(True)
@@ -298,6 +329,10 @@ class HomePage(QWidget):
             # TickLoop is the authoritative tracker (it's what gets persisted) - mirror it here.
             self._in_match_seconds = loop._in_match_seconds
             self.status_chip.set_state(STATE_TO_CHIP.get(loop.sm.state, "ready"))
+            if self.stop_btn.isEnabled():
+                # Keep the Pause/Resume label honest when the session pauses
+                # itself (e.g. stuck waiting for calibration) or via hotkey.
+                self.pause_btn.setText("Resume" if loop.sm.state is State.PAUSED else "Pause")
             c = loop.sm.counters
             self.tiles["respawns"].set_value(str(c.respawns))
             self.tiles["reconnects"].set_value(str(c.reconnects))
@@ -306,8 +341,9 @@ class HomePage(QWidget):
             self.tiles["time_lost"].set_value(_format_hms(c.time_lost_s))
             session_s = max(now - (self._session_start or now) - self._paused_total, 0.001)
             self.tiles["uptime"].set_value(f"{min(self._in_match_seconds / session_s * 100, 100):.0f}%")
-            self.progress_bar.set_value(self.ctx.contract_banked_hours() + self._in_match_seconds / 3600.0)
-            self.progress_bar.set_value(self._in_match_seconds / 3600.0)
+            # Banked hours as of session start + this session's credited time
+            # (re-reading state.json here would double-count after each flush).
+            self.progress_bar.set_value(self._banked_at_start + self._in_match_seconds / 3600.0)
             self._update_thumbnail(loop)
         self._last_sample = now
 

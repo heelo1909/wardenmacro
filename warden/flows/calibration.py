@@ -106,3 +106,67 @@ def parse_contract_hours(text: str | None) -> float | None:
     hours = int(match.group("hours"))
     minutes = int(match.group("minutes"))
     return days * 24 + hours + minutes / 60.0
+
+
+# --------------------------------------------------------------------------- preflight
+
+# Detectors the lobby -> FFA -> match path can't work without. If any of these
+# is template-based and its template was never captured, the state machine can
+# never get past that screen - which used to show up as Warden endlessly
+# timing out and relaunching ("keeps rejoining, never opens FFA").
+CRITICAL_DETECTORS = ("lobby_play", "mode_list", "ffa_tile", "health_bar")
+# Needed for respawn / loadout handling but not for simply reaching a match.
+SECONDARY_DETECTORS = ("weapon_picker", "respawn_prompt", "match_end")
+
+
+def template_library(subdir: str | None = None) -> TemplateLibrary:
+    """The template library the live app uses: user data folder first, then
+    the install/repo folder as a read-only fallback for older captures.
+    """
+    from warden import paths
+
+    base, fallback = paths.templates_home(), paths.repo_root()
+    if subdir:
+        base, fallback = base / subdir, fallback / subdir
+    return TemplateLibrary(base, fallbacks=[fallback])
+
+
+def calibration_gaps(app, preset, detector_templates: TemplateLibrary | None = None,
+                     weapon_templates: TemplateLibrary | None = None) -> list[tuple[str, str]]:
+    """What still needs calibrating before a run can work, as (severity, message)
+    pairs - severity ``"error"`` blocks reaching a match at all, ``"warn"``
+    only degrades respawn/loadout handling.
+    """
+    from warden.flows.loadout import weapon_template_path
+
+    detector_templates = detector_templates or template_library()
+    weapon_templates = weapon_templates or template_library(app.weapon_templates_dir)
+    gaps: list[tuple[str, str]] = []
+    for name in (*CRITICAL_DETECTORS, *SECONDARY_DETECTORS):
+        cfg = app.detectors.get(name)
+        severity = "error" if name in CRITICAL_DETECTORS else "warn"
+        if cfg is None or not cfg.enabled:
+            if name in CRITICAL_DETECTORS and name not in ("mode_list",):
+                gaps.append((severity, f"detector '{name}' is disabled or missing from config"))
+            continue
+        if cfg.method == "template":
+            if cfg.template is None or not detector_templates.exists(cfg.template.path):
+                path = cfg.template.path if cfg.template else f"templates/{name}.png"
+                gaps.append((severity, f"'{name}' has no captured template yet ({path})"))
+
+    # mode_list and ffa_tile are interchangeable for leaving the lobby; only
+    # flag mode_list when ffa_tile can't stand in for it either.
+    ffa_missing = any("'ffa_tile'" in m for _, m in gaps)
+    if not ffa_missing:
+        gaps = [g for g in gaps if "'mode_list'" not in g[1]]
+
+    if not preset.loadout.random:
+        for slot, weapon in preset.loadout.slots().items():
+            if not weapon:
+                continue
+            if not weapon_templates.exists(weapon_template_path(slot, weapon)):
+                gaps.append(("warn", f"no weapon template for {slot} '{weapon}' - Warden can't select it "
+                                     f"(Calibration > Weapon templates)"))
+            if slot not in app.loadout_ui.slots:
+                gaps.append(("warn", f"loadout picker layout for '{slot}' isn't set up"))
+    return gaps

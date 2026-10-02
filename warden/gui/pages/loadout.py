@@ -21,6 +21,7 @@ from warden.config.loader import load_preset
 from warden.config.schema import Contract, Preset
 from warden.gui.context import AppContext
 from warden.gui.widgets import card, page_header, section_label
+from warden.gui.widgets import ResponsiveRow
 
 
 class LoadoutPage(QWidget):
@@ -33,8 +34,8 @@ class LoadoutPage(QWidget):
         layout.setSpacing(16)
         layout.addWidget(page_header("Loadout"))
 
-        body = QHBoxLayout()
-        layout.addLayout(body)
+        body = ResponsiveRow(breakpoint=640)
+        layout.addWidget(body)
 
         # -- preset list ---------------------------------------------------
         list_card, list_layout = card()
@@ -54,13 +55,15 @@ class LoadoutPage(QWidget):
         for b in (new_btn, rename_btn, delete_btn):
             btn_row.addWidget(b)
         list_layout.addLayout(btn_row)
-        body.addWidget(list_card, 1)
+        body.add(list_card, 1)
 
         # -- editor ---------------------------------------------------
         editor_card, editor_layout = card()
         editor_layout.addWidget(section_label("Slots"))
         form = QFormLayout()
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.random_box = QCheckBox("Random (pick from owned_weapons each match)")
+        self.preset_list.setMinimumHeight(120)
         form.addRow(self.random_box)
         self.slot_edits = {}
         for slot in ("primary", "secondary", "melee", "utility"):
@@ -75,6 +78,7 @@ class LoadoutPage(QWidget):
         verify_row.addWidget(self.verify_btn)
         self.verify_result = QLabel("")
         self.verify_result.setObjectName("Muted")
+        self.verify_result.setWordWrap(True)
         verify_row.addWidget(self.verify_result, 1)
         editor_layout.addLayout(verify_row)
 
@@ -82,7 +86,7 @@ class LoadoutPage(QWidget):
         save_btn.clicked.connect(self._save)
         editor_layout.addWidget(save_btn)
         editor_layout.addStretch(1)
-        body.addWidget(editor_card, 2)
+        body.add(editor_card, 2)
 
         self._editing_id = ctx.preset_id
         self._populate(ctx.preset)

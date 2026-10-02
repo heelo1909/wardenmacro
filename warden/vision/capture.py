@@ -45,3 +45,31 @@ def measure_fps(capturer: Capturer, rect: Rect, seconds: float = 1.0) -> float:
         capturer.grab(rect)
         frames += 1
     return frames / (time.perf_counter() - start)
+
+
+def grab_roblox_client(focus: bool = True) -> np.ndarray | None:
+    """One frame of the Roblox client, with no session running.
+
+    Used by Calibration: before this, "Capture live frame" only worked while a
+    session was running - and a session that can't recognize the screens yet
+    is exactly the one that keeps clicking and relaunching, so calibrating
+    was a chicken-and-egg problem. Returns None if no client window is found.
+    """
+    from warden.platform import dpi
+    from warden.platform.window import Win32Windows, pick_client
+
+    dpi.ensure_dpi_awareness()
+    backend = Win32Windows()
+    client = pick_client(backend.list_windows())
+    if client is None or client.client.is_empty():
+        return None
+    if focus:
+        try:
+            backend.focus(client.hwnd)
+            time.sleep(0.35)  # let the window come to the front before grabbing pixels
+        except Exception:
+            pass
+        refreshed = backend.refresh(client.hwnd)
+        if refreshed is not None and not refreshed.client.is_empty():
+            client = refreshed
+    return MssCapturer().grab(client.client)

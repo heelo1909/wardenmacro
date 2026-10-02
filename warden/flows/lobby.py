@@ -24,26 +24,34 @@ class ModeSelectSearch:
         clock: Callable[[], float],
         max_attempts: int = 12,
         scroll_cooldown_s: float = 1.0,
+        click_interval_s: float = 2.5,
     ):
         self.actions = actions
         self.clock = clock
         self.max_attempts = max_attempts
         self.scroll_cooldown_s = scroll_cooldown_s
+        # The first click on the FFA tile can land while the menu is still
+        # animating in (or get eaten by a focus change); if the tile is still
+        # on screen this long after a click, click it again rather than
+        # sitting there until the mode-select timeout.
+        self.click_interval_s = click_interval_s
         self.reset()
 
     def reset(self) -> None:
         self.attempts = 0
         self._last_scroll: float = float("-inf")  # so the very first attempt scrolls immediately
-        self._clicked = False
+        self._last_click: float | None = None
+        self.clicks = 0
 
     def tick(self, ffa_visible: bool, now: float | None = None) -> None:
         now = self.clock() if now is None else now
         if ffa_visible:
-            if not self._clicked:
+            if self._last_click is None or now - self._last_click >= self.click_interval_s:
                 self.actions.click_ffa()
-                self._clicked = True
+                self._last_click = now
+                self.clicks += 1
             return
-        self._clicked = False
+        self._last_click = None
         if self.attempts >= self.max_attempts:
             return  # give up; the state machine's own timeout will bail to LOBBY
         if now - self._last_scroll >= self.scroll_cooldown_s:

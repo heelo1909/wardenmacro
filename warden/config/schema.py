@@ -164,6 +164,9 @@ class Timings(_Model):
     respawn_repress_s: Seconds = 1.5
     switch_window_watch_s: Seconds = 6
     state_save_s: Seconds = 30
+    lobby_click_interval_s: Seconds = 4       # re-click Play this often while the mode list hasn't opened
+    ffa_click_interval_s: Seconds = 2.5       # re-click the FFA tile this often while it stays on screen
+    ui_settle_s: Seconds = 0.6                # wait after a loadout click before reading the screen again
     timeouts: StateTimeouts = Field(default_factory=StateTimeouts)
 
 
@@ -230,6 +233,13 @@ class RecoveryConfig(_Model):
     backoff_cap_s: Seconds = 600
     alert_after_cycles: Annotated[int, Field(ge=1)] = 3
     frozen_seconds: Seconds = 30
+    # A healthy, running client whose screen just isn't being recognized is
+    # retried in place (Escape -> back to lobby -> Play again) this many times
+    # before Warden relaunches it, and it relaunches at most this many times
+    # for that reason before pausing and asking for Calibration - instead of
+    # rejoining forever.
+    max_soft_resets: Annotated[int, Field(ge=1, le=50)] = 4
+    max_stuck_relaunches: Annotated[int, Field(ge=0, le=20)] = 2
     error_codes: list[int] = [277, 279, 267, 268, 529]
 
 

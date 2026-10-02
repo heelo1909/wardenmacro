@@ -131,6 +131,62 @@ reliably showing up in this environment's captured output on every run this
 session, so test counts quoted earlier in this file (e.g. "341" at the end of
 Phase 9) were dot-count estimates and may be slightly off from the true count.
 
+## Post-Phase-9 fixes, round 2 (user testing, 2026-10-01 evening)
+
+User reported: (a) Warden "keeps rejoining and refreshing the game without ever
+opening an FFA and selecting the right weapons", (b) the UI gets cramped and cuts
+off text on a small monitor. No `templates/` existed anywhere (repo, `dist`), so
+every template detector was permanently blind - that plus the bugs below made the
+relaunch loop inevitable.
+
+Root causes and fixes (regression tests: `tests/test_stuck_loop_regressions.py`):
+1. **Start always opened `roblox://experiences/start`**, even with Roblox already
+   open - Roblox then leaves and rejoins. `StateMachine.start(attach=True)` now takes
+   over a running client (goes to LOADING); `TickLoop.start()` checks first.
+2. **Every recognition timeout = full relaunch.** LOADING/LOBBY/MODE_SELECT/
+   MATCH_END timeouts and UNKNOWN all went to RECOVERING (close + relaunch). Now a
+   healthy client gets a *soft reset* (Escape -> LOBBY -> Play) up to
+   `recovery.max_soft_resets` (4); then at most `recovery.max_stuck_relaunches` (2)
+   relaunches; then Warden **pauses** and emits `session.stuck` naming the step it
+   couldn't pass. Hard recovery is still immediate for real failures (process gone,
+   disconnect modal, frozen frame, updater, launch timeout, loading with no window).
+3. **Play and FFA were clicked once.** Play is re-clicked every
+   `timings.lobby_click_interval_s` (4s); the FFA tile every
+   `timings.ffa_click_interval_s` (2.5s) while still visible. `ffa_tile` seen in the
+   lobby (or mode list / weapon picker / respawn on load) is accepted directly.
+4. **Recovery clicked the "Leave" placeholder spot for every cause** - a stray click
+   into the lobby. Now only for an actual disconnect; the real cause is passed
+   through (`_recovery_cause`) instead of the hardcoded "retry".
+5. **Loadout read the screen before the game redrew** (verify ran on the frame
+   captured before the click) and the post-respawn reapply loop re-read one stale
+   frame 500 times. Loadout now grabs fresh frames, waits `timings.ui_settle_s`
+   (0.6s) after each click, and gives verification 3 looks.
+6. **Calibration's "Capture live frame" required a running session** - i.e. running
+   the very loop that relaunches the game. It now grabs the Roblox window directly.
+   Saving a template for a color detector switches it to template matching.
+7. **Preflight:** Start shows a "Calibration needed" dialog listing missing
+   critical templates (`flows/calibration.py: calibration_gaps`), with Open
+   Calibration / Start anyway / Cancel. Unattended contract-queue restarts never
+   prompt. Tests auto-answer via `MainWindow._ask_calibration` (conftest).
+8. Templates now live in `%LOCALAPPDATA%\Warden\templates` (`paths.templates_home`)
+   with the repo/install folder as a read-only fallback, so they survive a rebuild.
+9. Global hotkeys were calling Qt widgets from pynput's thread; now marshalled
+   through a queued Qt signal. Home's contract progress bar no longer overwrites the
+   banked total with session-only hours.
+
+**UI scaling:** `theme.stylesheet(scale)` scales every font size and spacing;
+`MainWindow` picks scale from window size (0.72-1.2, 0.04 steps, debounced), opens
+at min(design size, 90% of screen), min size 560x400, wraps every page in a scroll
+area. New `widgets.FlowLayout`/`flow()`, `ResponsiveRow` (stacks cards when narrow),
+`ResponsiveGrid` (counter tiles reflow 6 -> 3x2 -> 2x3). Checked by rendering
+offscreen at 600x420, 760x480, 1120x740.
+
+Tests: 353 collected; all pass except 10 that need real Windows APIs (power,
+hotkeys, capture) when run in the Linux sandbox - the same set that failed there
+before these changes. **Needs a re-run on Windows** and a **PyInstaller rebuild**
+(`dist\Warden` is still the old build). Live Roblox verification not possible from
+this session (no desktop control) - next real run should start with Calibration.
+
 ## ALL PHASES COMPLETE (0 through 9)
 
 What's left, for the user:

@@ -119,6 +119,7 @@ class GameActions(Protocol):
     def handle_recovering(self, cause: str) -> State: ...
     def on_incident(self, cause: str) -> None: ...
     def on_recovered(self) -> None: ...
+    def on_stuck(self, message: str) -> None: ...
 
 
 class NullActions:
@@ -138,6 +139,7 @@ class NullActions:
     def handle_recovering(self, cause: str) -> State: return State.RECOVERING
     def on_incident(self, cause: str) -> None: pass
     def on_recovered(self) -> None: pass
+    def on_stuck(self, message: str) -> None: pass
 
 
 # --------------------------------------------------------------------------- confirmers
@@ -211,6 +213,10 @@ class StateMachine:
         disconnect_confirm_seconds: float = 1.5,
         recovery_confirm_gap: float = 5.0,
         mode_select_scroll_attempts: int = 12,
+        lobby_click_interval: float = 4.0,
+        ffa_click_interval: float = 2.5,
+        max_soft_resets: int = 4,
+        max_stuck_relaunches: int = 2,
     ):
         self.actions = actions
         self.timeouts = timeouts or StateTimeouts()
@@ -221,11 +227,24 @@ class StateMachine:
         self._entered_at = clock()
         self._pre_pause: State = State.IDLE
         self._lobby_retries = 0
+        self._last_play_click: float | None = None
+        self.lobby_click_interval = lobby_click_interval
+        # "Stuck" bookkeeping: a running client whose screens we just can't
+        # recognize is retried in place (soft reset) before ever being
+        # relaunched, and relaunched only a few times for that reason before
+        # pausing - see _soft_reset(). Both reset on reaching IN_MATCH.
+        self.max_soft_resets = max_soft_resets
+        self.max_stuck_relaunches = max_stuck_relaunches
+        self._soft_resets = 0
+        self._stuck_relaunches = 0
+        self._recovery_cause = "retry"
+        self.stuck_message: str | None = None
 
         self._disconnect = _StreakConfirmer(disconnect_confirm_captures, disconnect_confirm_seconds)
         self._recovered = _GapConfirmer(recovery_confirm_gap)
         self._respawn = RespawnFlow(actions, clock)
-        self._mode_select = ModeSelectSearch(actions, clock, max_attempts=mode_select_scroll_attempts)
+        self._mode_select = ModeSelectSearch(actions, clock, max_attempts=mode_select_scroll_attempts,
+                                             click_interval_s=ffa_click_interval)
         self._last_seen: float = clock()
         self._match_end_click_at: float = 0.0
 
@@ -248,7 +267,11 @@ class StateMachine:
             self.counters.respawns += 1
         if new_state is State.LOBBY:
             self._lobby_retries = 0
+            self._last_play_click = None
         if new_state is State.IN_MATCH:
+            self._soft_resets = 0
+            self._stuck_relaunches = 0
+            self.stuck_message = None
             # A fresh "confirmed in a match" moment, by any path - a disconnect
             # confirmer left mid-count from a prior incident must not let a
             # single future frame instantly re-trigger recovery, and whatever
@@ -260,10 +283,23 @@ class StateMachine:
 
     # -- public API -------------------------------------------------------
 
-    def start(self) -> None:
+    def start(self, attach: bool = False) -> None:
+        """Begin a session. ``attach=True`` means a Roblox client is already
+        running: take it over where it is instead of opening the launch URI -
+        opening ``roblox://`` while a client is up makes Roblox leave the
+        current server and rejoin, which is exactly the "keeps rejoining" loop.
+        """
         if self.state in (State.IDLE, State.STOPPED):
-            self.actions.launch()
-            self._go(State.LAUNCHING, "user start", self.clock())
+            now = self.clock()
+            self._soft_resets = 0
+            self._stuck_relaunches = 0
+            self.stuck_message = None
+            self._last_seen = now
+            if attach:
+                self._go(State.LOADING, "attached to running Roblox client", now)
+            else:
+                self.actions.launch()
+                self._go(State.LAUNCHING, "user start", now)
 
     def pause(self) -> None:
         if self.state not in (State.PAUSED, State.STOPPED, State.IDLE):
@@ -280,6 +316,57 @@ class StateMachine:
     def force_state(self, state: State, cause: str = "forced") -> None:
         """Escape hatch for Phase 4's recovery flow, GUI actions, etc."""
         self._go(state, cause, self.clock())
+
+    # -- recovery / stuck handling -------------------------------------------------------
+
+    def _enter_recovery(self, cause: str, reason: str, now: float, count: bool = True) -> None:
+        """Hard recovery: RecoverySequence closes and relaunches the client."""
+        if count:
+            self.counters.reconnects += 1
+        self._recovery_cause = cause
+        self._go(State.RECOVERING, reason, now)
+
+    def _soft_reset(self, what: str, now: float) -> None:
+        """The client is running but we never saw ``what`` - most often an
+        uncalibrated detector, not a broken game. Escape out of whatever menu
+        is open and retry from the lobby; only after ``max_soft_resets`` of
+        those relaunch the client, and after ``max_stuck_relaunches`` such
+        relaunches pause and say what's missing instead of looping forever.
+        """
+        self._soft_resets += 1
+        if self._soft_resets <= self.max_soft_resets:
+            self.actions.press_escape()
+            if self.state is State.LOBBY:
+                # Re-entering the same state: restart its clock and click Play again.
+                self._entered_at = now
+                self._lobby_retries = 0
+                self._last_play_click = None
+                log.info("lobby retry %d/%d (%s)", self._soft_resets, self.max_soft_resets, what)
+                if self.on_transition:
+                    self.on_transition(Transition(State.LOBBY, State.LOBBY,
+                                                  f"retry {self._soft_resets}/{self.max_soft_resets}: {what}", now))
+            else:
+                self._go(State.LOBBY, f"retry {self._soft_resets}/{self.max_soft_resets}: {what}", now)
+            return
+
+        if self._stuck_relaunches < self.max_stuck_relaunches:
+            self._stuck_relaunches += 1
+            self._soft_resets = 0
+            self.actions.on_incident("stuck")
+            self._enter_recovery("stuck", f"stuck ({what}) - relaunching "
+                                          f"{self._stuck_relaunches}/{self.max_stuck_relaunches}", now)
+            return
+
+        self.stuck_message = (
+            f"Warden paused: it kept failing at the same step ({what}). This almost always means "
+            f"that screen hasn't been calibrated for your monitor yet - open Calibration, capture "
+            f"that screen, then press Resume."
+        )
+        self.actions.on_stuck(self.stuck_message)
+        self._soft_resets = 0
+        self._stuck_relaunches = 0
+        self._pre_pause = State.LOBBY
+        self._go(State.PAUSED, f"stuck: {what}", now)
 
     # -- main entry point -------------------------------------------------------
 
@@ -305,35 +392,32 @@ class StateMachine:
         # the RECOVERING branch below (which actually drives recovery) would
         # never get a turn.
         if s.roblox_updating and self.state is not State.RECOVERING:
-            self.counters.reconnects += 1
             self.actions.on_incident("roblox_updating")
-            self._go(State.RECOVERING, "roblox updating", now)
+            self._enter_recovery("roblox_updating", "roblox updating", now)
             return True
 
         if self.state not in (State.RECOVERING, State.DISCONNECTED) and self._disconnect.update(s.disconnect_modal, now):
             self.counters.reconnects += 1
             self.actions.on_incident("disconnect")
             self._go(State.DISCONNECTED, "disconnect modal confirmed", now)
-            self._go(State.RECOVERING, "disconnect", now)
+            self._enter_recovery("disconnect", "disconnect", now, count=False)
             return True
 
         if self.state in _ACTIVE_STATES and not s.process_running:
-            self.counters.reconnects += 1
             self.actions.on_incident("process_gone")
-            self._go(State.RECOVERING, "roblox process gone", now)
+            self._enter_recovery("process_gone", "roblox process gone", now)
             return True
 
         if self.state is State.IN_MATCH and s.frozen:
-            self.counters.reconnects += 1
             self.actions.on_incident("frozen")
-            self._go(State.RECOVERING, "frame frozen", now)
+            self._enter_recovery("frozen", "frame frozen", now)
             return True
 
         if self.state is State.RECOVERING:
             if self._recovered.update(s.health_bar, now):
                 self._go(State.IN_MATCH, "recovery confirmed (health bar twice)", now)
                 return True
-            next_state = self.actions.handle_recovering("retry")
+            next_state = self.actions.handle_recovering(self._recovery_cause)
             if next_state is not State.RECOVERING:
                 self._go(next_state, "recovery handed off", now)
             return True
@@ -361,36 +445,49 @@ class StateMachine:
         if s.client_window_exists:
             self._go(State.LOADING, "client window appeared", now)
         elif self._since_entry(now) >= self.timeouts.launching:
-            self.counters.reconnects += 1
-            self._go(State.RECOVERING, "launch timeout", now)
+            self._enter_recovery("launch_timeout", "launch timeout", now)
 
     def _handle_loading(self, s: Signals, now: float) -> None:
         if s.health_bar:
             self._go(State.IN_MATCH, "already in a match on load", now)
+        elif s.respawn_prompt:
+            self._go(State.DEAD, "respawn prompt visible on load", now)
+        elif s.weapon_picker:
+            self._go(State.LOADOUT, "weapon picker visible on load", now)
+        elif s.mode_list or s.ffa_tile:
+            self._go(State.MODE_SELECT, "mode list visible on load", now)
         elif s.lobby_play:
             self._go(State.LOBBY, "lobby visible", now)
         elif self._since_entry(now) >= self.timeouts.loading:
-            self.counters.reconnects += 1
-            self._go(State.RECOVERING, "loading timeout", now)
+            if s.process_running and s.client_window_exists:
+                # The game is up; we just don't recognize its screen. Don't
+                # kill a healthy client for that - try the lobby route.
+                self._soft_reset("lobby Play button (lobby_play) never recognized", now)
+            else:
+                self._enter_recovery("loading_timeout", "loading timeout", now)
 
     def _handle_lobby(self, s: Signals, now: float) -> None:
-        if s.mode_list:
+        if s.mode_list or s.ffa_tile:
             self._go(State.MODE_SELECT, "mode list opened", now)
+            return
+        if s.weapon_picker:
+            self._go(State.LOADOUT, "weapon picker appeared", now)
+            return
+        if s.respawn_prompt:
+            self._go(State.DEAD, "respawn prompt appeared", now)
             return
         if s.health_bar:
             self._go(State.IN_MATCH, "already in a match", now)
             return
         if self._since_entry(now) >= self.timeouts.lobby:
-            if self._lobby_retries < 1:
-                self._lobby_retries += 1
-                self.actions.click_play()
-                self._entered_at = now
-            else:
-                self.counters.reconnects += 1
-                self._go(State.RECOVERING, "lobby timeout after retry", now)
+            self._soft_reset("mode list (mode_list / ffa_tile) never opened after clicking Play", now)
             return
-        if self._since_entry(now) < 0.5:  # click once, right on entry
+        # Click Play on entry, then again every lobby_click_interval while the
+        # mode list still hasn't opened (a single click is easily lost while
+        # the lobby is still loading in).
+        if self._last_play_click is None or now - self._last_play_click >= self.lobby_click_interval:
             self.actions.click_play()
+            self._last_play_click = now
 
     def _handle_mode_select(self, s: Signals, now: float) -> None:
         # Early abort: these mean we're already past mode select.
@@ -404,9 +501,11 @@ class StateMachine:
             self._go(State.IN_MATCH, "health bar appeared (early abort)", now)
             return
         if self._since_entry(now) >= self.timeouts.mode_select:
-            self._go(State.LOBBY, "mode select timeout", now)
+            what = ("clicked FFA but the match never started (no health_bar / weapon_picker)"
+                    if self._mode_select.clicks else "FFA tile (ffa_tile) never found in the mode list")
+            self._soft_reset(what, now)
             return
-        self._mode_select.tick(s.ffa_tile)
+        self._mode_select.tick(s.ffa_tile, now)
 
     def _handle_midgame_join(self, s: Signals, now: float) -> None:
         if not s.midgame_join:
@@ -464,13 +563,17 @@ class StateMachine:
             self._go(State.LOBBY, "back at lobby", now)
             return
         if self._since_entry(now) >= self.timeouts.match_end:
-            self._go(State.LOBBY, "match end timeout", now)
+            self._soft_reset("match-end screen never closed", now)
             return
         if now - self._match_end_click_at >= 2.0:
             self.actions.click_match_continue()
             self._match_end_click_at = now
 
     def _handle_unknown(self, s: Signals, now: float) -> None:
-        self.counters.reconnects += 1
         self.actions.on_incident("unknown_screen")
-        self._go(State.RECOVERING, "unknown screen handled", now)
+        if s.process_running and s.client_window_exists:
+            # Escape was already pressed on the way in; retry from the lobby
+            # rather than closing a client that's still running fine.
+            self._soft_reset("screen not recognized for too long", now)
+        else:
+            self._enter_recovery("unknown_screen", "unknown screen handled", now)
