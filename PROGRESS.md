@@ -187,6 +187,34 @@ before these changes. **Needs a re-run on Windows** and a **PyInstaller rebuild*
 (`dist\Warden` is still the old build). Live Roblox verification not possible from
 this session (no desktop control) - next real run should start with Calibration.
 
+## Calibration UX round (2026-10-02)
+
+User: "I did it, it just said warning, doesn't work" + "make it take the screenshots
+automatically". Their `%LOCALAPPDATA%\Warden` showed: no detector template ever saved;
+one weapon template that was the *whole screen* (2502x1440); the "warning" was the
+Start-time Calibration-needed dialog (mode_list/ffa_tile missing). Their real frames
+also showed RIVALS' health bar is bottom-left (default ROI was bottom-centre) and that
+Warden's own window covering the game was being captured as an "unknown screen".
+
+- `vision/capture.py: WindowCapturer` - PrintWindow(PW_CLIENTONLY|PW_RENDERFULLCONTENT)
+  capture of the Roblox window itself, screen-grab fallback per frame. Used by the tick
+  loop and calibration, so overlapping windows never end up in frames. **Untested on
+  real Windows** (sandbox is Linux) - verify on first run; fallback keeps old behavior.
+- `gui/guided_capture.py: GuidedCapture` - always-on-top step panel, auto-captures each
+  screen after an 8s countdown (Capture now / +10s / Skip / Done), saves to
+  `%LOCALAPPDATA%\Warden\calibration\<screen>.png`.
+- Calibration page: Setup checklist (○ not captured / ● captured / ✓ done), per-screen
+  hint, one-click **Save this screen** (`flows/calibration.py: quick_calibrate` - color
+  learning for health_bar, image template + padded ROI for everything else, then an
+  immediate test), auto-advance to the next unfinished screen, giant-box guard
+  (`selection_problem`, >35% of screen refused) also on weapon templates.
+- health_bar pre-calibrated (default.yaml + the user's config.yaml, backup kept in the
+  session outputs): ROI [0,0.84,0.31,1], HSV [40,150,170]-[66,255,255]. Hits on their
+  in-game frame, not on the Warden-covered frame.
+- Open question for the user: how FFA is entered in RIVALS (the lobby shows a
+  "To Duels" button and in-world queue pads, not a Play -> mode list flow), and the
+  lobby also shows a health bar - so health_bar alone can't tell lobby from match.
+
 ## ALL PHASES COMPLETE (0 through 9)
 
 What's left, for the user:

@@ -1,6 +1,10 @@
 """Calibration - HANDOFF section 7.4: capture a template, sample an HSV
 range, adjust a detector's ROI, and see a live detection overlay - all in
 under a minute per screen. Also the unknown-screen gallery (section 8.8).
+
+Easiest path (2026-10-02): "Auto-capture screens" walks through each screen
+with a small on-top panel and takes the screenshots by itself; then pick each
+screen in the checklist, drag one box, press "Save this screen".
 """
 
 from __future__ import annotations
@@ -19,19 +23,28 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from PySide6.QtCore import Qt, QTimer
+
 from warden import paths
 from warden.config.schema import DETECTOR_NAMES, SLOTS
 from warden.flows.calibration import (
+    CAPTURE_STEPS,
+    GUIDES_BY_KEY,
+    SCREEN_GUIDES,
     apply_hsv,
     apply_roi,
+    calibration_capture_path,
+    is_screen_calibrated,
     list_unknown_frames,
     make_template_from_unknown,
+    quick_calibrate,
     sample_hsv_from_selection,
     save_template_from_frame,
+    selection_problem,
 )
 from warden.flows.loadout import weapon_template_path
 from warden.gui.context import AppContext
-from warden.gui.widgets import FlowLayout, ImageCanvas, ResponsiveRow, card, muted, page_header, row, section_label
+from warden.gui.widgets import FlowLayout, ImageCanvas, ResponsiveRow, card, flow, muted, page_header, row, section_label
 from warden.vision.detectors import Detector
 from warden.vision.templates import TemplateLibrary
 
@@ -51,30 +64,167 @@ class CalibrationPage(QWidget):
         self._templates_root = templates_root or paths.templates_home()
         self._templates_fallbacks = [] if templates_root else [paths.repo_root()]
 
+        self._frame_source: str | None = None  # screen whose auto-capture is on the canvas
+        self._guided = None
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
         layout.addWidget(page_header("Calibration"))
+        layout.addWidget(self._build_checklist())
 
         tabs = QTabWidget()
+        self.tabs = tabs
         tabs.addTab(self._build_wizard_tab(), "Detector wizard")
         tabs.addTab(self._build_weapon_tab(), "Weapon templates")
         tabs.addTab(self._build_gallery_tab(), "Unknown gallery")
+        tabs.currentChanged.connect(lambda i: i == 1 and self._autoload_weapon_frame())
         layout.addWidget(tabs, 1)
+        self._refresh_checklist()
+
+    # -- setup checklist + auto-capture -------------------------------------------------------
+
+    def _build_checklist(self) -> QWidget:
+        frame, inner = card()
+        inner.addWidget(section_label("Setup checklist"))
+        inner.addWidget(muted(
+            "1) Click Auto-capture and follow the little panel over Roblox - it takes each "
+            "screenshot for you.  2) Click a screen below, drag ONE small box around the thing "
+            "it describes, and press Save this screen. Green = Warden can see it."))
+        self.auto_btn = QPushButton("▶  Auto-capture screens", objectName="Primary")
+        self.auto_btn.clicked.connect(self.start_guided_capture)
+        inner.addWidget(flow(self.auto_btn))
+        self.checklist_buttons: dict[str, QPushButton] = {}
+        for guide in SCREEN_GUIDES:
+            btn = QPushButton(guide.title)
+            btn.setObjectName("CheckItem")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda _=False, k=guide.key: self.open_screen(k))
+            self.checklist_buttons[guide.key] = btn
+        inner.addWidget(flow(*self.checklist_buttons.values(), spacing=6))
+        self.checklist_summary = muted("")
+        inner.addWidget(self.checklist_summary)
+        return frame
+
+    def _refresh_checklist(self) -> None:
+        templates = self._library()
+        done_required = missing_required = 0
+        for key, btn in self.checklist_buttons.items():
+            guide = GUIDES_BY_KEY[key]
+            ok = is_screen_calibrated(self.ctx.app, key, templates)
+            captured = calibration_capture_path(key).exists()
+            mark = "✓" if ok else ("●" if captured else "○")
+            btn.setText(f"{mark}  {guide.title}" + ("" if guide.required else " (optional)"))
+            btn.setProperty("state", "done" if ok else ("captured" if captured else "todo"))
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+            btn.setToolTip(f"{guide.go_to}\nBox: {guide.box_hint}")
+            if guide.required:
+                done_required += ok
+                missing_required += not ok
+        if missing_required:
+            self.checklist_summary.setText(
+                f"{done_required} of {done_required + missing_required} required screens done "
+                "(○ = not captured yet, ● = captured, needs a box, ✓ = done).")
+        else:
+            self.checklist_summary.setText("All required screens are done - Warden can get into FFA. "
+                                           "The optional ones improve respawn/loadout handling.")
+
+    def open_screen(self, key: str) -> None:
+        """Jump to the wizard with this screen selected and its capture loaded."""
+        self.tabs.setCurrentIndex(0)
+        self.screen_combo.setCurrentText(key)
+        self._load_auto_capture(key, force=True)
+
+    def start_guided_capture(self) -> None:
+        from warden.gui.guided_capture import GuidedCapture
+
+        if self._guided is not None:
+            return
+        anchor = None
+        try:
+            from warden.vision.capture import find_roblox_client
+
+            found = find_roblox_client()
+            if found is not None:
+                _hwnd, rect = found
+                anchor = (rect.left, rect.top, rect.width, rect.height)
+        except Exception:
+            anchor = None
+        self.result_label.setText("Auto-capture running - follow the panel in the top-right of Roblox.")
+        self._guided = GuidedCapture(CAPTURE_STEPS, grab=self._grab_for_guided,
+                                     on_captured=self._on_guided_capture,
+                                     on_finished=self._on_guided_finished, anchor=anchor)
+        window = self.window()
+        if window is not self:
+            window.showMinimized()
+        self._guided.show()
+
+    def _grab_for_guided(self):
+        from warden.vision.capture import grab_roblox_client
+
+        return grab_roblox_client(focus=False)
+
+    def _on_guided_capture(self, keys, frame) -> None:
+        import cv2
+
+        for key in keys:
+            cv2.imwrite(str(calibration_capture_path(key)), frame)
+
+    def _on_guided_finished(self, captured: list[str]) -> None:
+        self._guided = None
+        window = self.window()
+        if window is not self:
+            window.showNormal()
+            window.raise_()
+            window.activateWindow()
+        self._refresh_checklist()
+        first = next((g.key for g in SCREEN_GUIDES if g.key in captured
+                      and not is_screen_calibrated(self.ctx.app, g.key, self._library())), None)
+        if first:
+            self.open_screen(first)
+            self.result_label.setText(f"Captured {len(set(captured))} screen(s). Now: "
+                                      f"{GUIDES_BY_KEY[first].title} - drag a box around "
+                                      f"{GUIDES_BY_KEY[first].box_hint}, then press Save this screen.")
+        elif not captured:
+            self.result_label.setText("Nothing was captured.")
+
+    def _load_auto_capture(self, key: str, force: bool = False) -> bool:
+        """Show the auto-captured screenshot for ``key`` if there is one (and
+        the canvas isn't showing something the user captured by hand)."""
+        path = calibration_capture_path(key)
+        if not path.exists() or (not force and self._frame is not None and self._frame_source is None):
+            return False
+        import cv2
+
+        frame = cv2.imread(str(path))
+        if frame is None:
+            return False
+        self._frame = frame
+        self._frame_source = key
+        self.canvas.set_frame(frame)
+        return True
+
+    def _on_screen_changed(self, key: str) -> None:
+        guide = GUIDES_BY_KEY.get(key)
+        if guide is not None:
+            self.hint_label.setText(f"<b>{guide.title}</b> - in Roblox: {guide.go_to}<br>"
+                                    f"Drag a box around: <b>{guide.box_hint}</b>")
+        else:
+            self.hint_label.setText(f"<b>{key}</b> - advanced detector; most people don't need this.")
+        self._load_auto_capture(key)
 
     # -- detector wizard -------------------------------------------------------
 
     def _build_wizard_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.addWidget(muted("Pick a screen, capture it (live, or load a saved image), "
-                               "drag a box over the part that matters, then save a template "
-                               "and/or apply it as that detector's color range and ROI."))
-
         top_row_w = QWidget()
         top_row = FlowLayout(top_row_w)
         self.screen_combo = QComboBox()
-        self.screen_combo.addItems(list(DETECTOR_NAMES))
+        ordered = [g.key for g in SCREEN_GUIDES] + [n for n in DETECTOR_NAMES
+                                                    if n not in GUIDES_BY_KEY]
+        self.screen_combo.addItems(ordered)
         top_row.addWidget(QLabel("Screen:"))
         top_row.addWidget(self.screen_combo)
         capture_btn = QPushButton("Capture live frame")
@@ -85,27 +235,84 @@ class CalibrationPage(QWidget):
         top_row.addWidget(load_btn)
         layout.addWidget(top_row_w)
 
+        self.hint_label = QLabel()
+        self.hint_label.setWordWrap(True)
+        self.hint_label.setTextFormat(Qt.RichText)
+        layout.addWidget(self.hint_label)
+
         self.canvas = ImageCanvas()
-        self.canvas.setMinimumHeight(200)
+        self.canvas.setMinimumHeight(300)
         layout.addWidget(self.canvas, 1)
+
+        main_row_w = QWidget()
+        main_row = FlowLayout(main_row_w)
+        quick_btn = QPushButton("✓  Save this screen", objectName="Primary")
+        quick_btn.clicked.connect(self._quick_save)
+        main_row.addWidget(quick_btn)
+        test_btn = QPushButton("Test")
+        test_btn.clicked.connect(self._run_detection)
+        main_row.addWidget(test_btn)
+        layout.addWidget(main_row_w)
 
         action_row_w = QWidget()
         action_row = FlowLayout(action_row_w)
+        action_row.addWidget(QLabel("Advanced:", objectName="Muted"))
         save_tpl_btn = QPushButton("Save selection as template")
         save_tpl_btn.clicked.connect(self._save_template)
         sample_btn = QPushButton("Sample HSV from selection")
         sample_btn.clicked.connect(self._sample_hsv)
         roi_btn = QPushButton("Set as detector ROI")
         roi_btn.clicked.connect(self._set_roi)
-        detect_btn = QPushButton("Run detection", objectName="Primary")
-        detect_btn.clicked.connect(self._run_detection)
-        for b in (save_tpl_btn, sample_btn, roi_btn, detect_btn):
+        for b in (save_tpl_btn, sample_btn, roi_btn):
             action_row.addWidget(b)
         layout.addWidget(action_row_w)
 
         self.result_label = muted("")
         layout.addWidget(self.result_label)
+        self.screen_combo.currentTextChanged.connect(self._on_screen_changed)
+        self._on_screen_changed(self.screen_combo.currentText())
         return tab
+
+    def _quick_save(self) -> None:
+        """One button: learn this screen from the box, then test it right away."""
+        name = self.screen_combo.currentText()
+        sel = self.canvas.selection_fractions()
+        if self._frame is None:
+            self.result_label.setText("Capture this screen first (Auto-capture, or Capture live frame).")
+            return
+        problem = selection_problem(sel)
+        if problem:
+            self.result_label.setText(problem)
+            return
+        if name not in self.ctx.app.detectors:
+            self.result_label.setText(f"'{name}' has no detector config section yet.")
+            return
+        templates = self._library()
+        new_cfg, how = quick_calibrate(self.ctx.app, name, self._frame, sel, templates)
+        self.ctx.app.detectors[name] = new_cfg
+        self.ctx.save_app_config()
+        result = Detector(name, new_cfg, templates).evaluate(self._frame)
+        title = GUIDES_BY_KEY[name].title if name in GUIDES_BY_KEY else name
+        if result.hit:
+            self.result_label.setText(f"✓ {title}: {how} - Warden can see it on this screenshot.")
+        else:
+            self.result_label.setText(f"⚠ {title}: {how}, but the test didn't find it again - "
+                                      "try a slightly tighter box around something that doesn't move.")
+        self._refresh_checklist()
+        self._goto_next_todo(name)
+
+    def _goto_next_todo(self, after: str) -> None:
+        """After a successful save, move on to the next captured-but-unfinished screen."""
+        templates = self._library()
+        keys = [g.key for g in SCREEN_GUIDES]
+        start = keys.index(after) + 1 if after in keys else 0
+        for key in keys[start:]:
+            if calibration_capture_path(key).exists() and not is_screen_calibrated(self.ctx.app, key, templates):
+                previous = self.result_label.text()
+                QTimer.singleShot(900, lambda k=key, p=previous: (
+                    self.open_screen(k),
+                    self.result_label.setText(f"{p}\nNext: {GUIDES_BY_KEY[k].title}.")))
+                return
 
     def _library(self, subdir: str | None = None) -> TemplateLibrary:
         base = self._templates_root / subdir if subdir else self._templates_root
@@ -121,16 +328,21 @@ class CalibrationPage(QWidget):
         if loop is not None and loop._client_rect is not None:
             return loop.capturer.grab(loop._client_rect)
         try:
-            from warden.vision.capture import grab_roblox_client
+            from warden.vision import capture
 
-            window = self.window()
-            window.showMinimized()  # don't capture Warden's own window on top of the game
-            try:
-                return grab_roblox_client()
-            finally:
-                window.showNormal()
-                window.raise_()
-                window.activateWindow()
+            frame = capture.grab_roblox_client()
+            if frame is not None and getattr(capture.grab_roblox_client, "last_method", "window") == "screen":
+                # Window capture unavailable -> a plain screen grab, which would
+                # include Warden itself; get out of the way and grab again.
+                window = self.window()
+                window.showMinimized()
+                try:
+                    frame = capture.grab_roblox_client(focus=True)
+                finally:
+                    window.showNormal()
+                    window.raise_()
+                    window.activateWindow()
+            return frame
         except Exception:
             return None
 
@@ -141,6 +353,7 @@ class CalibrationPage(QWidget):
                                       "or load a screenshot instead.")
             return
         self._frame = frame
+        self._frame_source = None
         self.canvas.set_frame(self._frame)
         self.result_label.setText("Captured live frame.")
 
@@ -155,6 +368,7 @@ class CalibrationPage(QWidget):
             self.result_label.setText(f"Could not read {path}")
             return
         self._frame = frame
+        self._frame_source = None
         self.canvas.set_frame(frame)
         self.result_label.setText(f"Loaded {Path(path).name}")
 
@@ -187,6 +401,7 @@ class CalibrationPage(QWidget):
             self.ctx.save_app_config()
             note = f" - '{name}' now uses this template for detection"
         self.result_label.setText(f"Saved template: {path}{note}")
+        self._refresh_checklist()
 
     def _sample_hsv(self) -> None:
         sel = self._selection_or_warn()
@@ -229,8 +444,9 @@ class CalibrationPage(QWidget):
         result = detector.evaluate(self._frame)
         if result.box:
             self.canvas._selection_px = None  # clear the drag selection so the detection box is unambiguous
+        verdict = "✓ found" if result.hit else "✗ not found"
         self.result_label.setText(
-            f"'{name}': hit={result.hit} confidence={result.confidence:.2f}"
+            f"'{name}': {verdict} (hit={result.hit} confidence={result.confidence:.2f})"
             + (f" box={[round(v, 3) for v in result.box]}" if result.box else "")
         )
 
@@ -243,8 +459,9 @@ class CalibrationPage(QWidget):
             "This is what makes a specific weapon selectable in the loadout picker "
             "(the Loadout page's 'Verify now' and the auto-equip logic both need this, "
             "separately from the detector templates on the other tab). Open the weapon "
-            "picker in-game, land on the slot's category, capture, then drag a box "
-            "tightly around the weapon's tile - its icon and/or name."
+            "picker in-game, land on the slot's category, capture (Auto-capture's weapon "
+            "picker step loads here automatically), then drag a small box around just "
+            "that weapon's row/tile - its name is usually the best part."
         ))
 
         top_row_w = QWidget()
@@ -267,7 +484,7 @@ class CalibrationPage(QWidget):
         layout.addWidget(top_row_w)
 
         self.weapon_canvas = ImageCanvas()
-        self.weapon_canvas.setMinimumHeight(200)
+        self.weapon_canvas.setMinimumHeight(300)
         layout.addWidget(self.weapon_canvas, 1)
 
         save_btn = QPushButton("Save selection as this weapon's template", objectName="Primary")
@@ -278,6 +495,22 @@ class CalibrationPage(QWidget):
 
         self._refresh_weapon_name_options(self.weapon_slot_combo.currentText())
         return tab
+
+    def _autoload_weapon_frame(self) -> bool:
+        if self._weapon_frame_store is not None:
+            return False
+        path = calibration_capture_path("weapon_picker")
+        if not path.exists():
+            return False
+        import cv2
+
+        frame = cv2.imread(str(path))
+        if frame is None:
+            return False
+        self._weapon_frame_store = frame
+        self.weapon_canvas.set_frame(frame)
+        self.weapon_result.setText("Loaded the auto-captured weapon picker.")
+        return True
 
     def _refresh_weapon_name_options(self, slot: str) -> None:
         self.weapon_name_combo.clear()
@@ -320,10 +553,14 @@ class CalibrationPage(QWidget):
         if not name:
             self.weapon_result.setText("Type the weapon's name first (must match the preset exactly).")
             return
+        problem = selection_problem(sel)
+        if problem:
+            self.weapon_result.setText(problem)
+            return
         slot = self.weapon_slot_combo.currentText()
         templates = self._library(self.ctx.app.weapon_templates_dir)
         path = save_template_from_frame(templates, weapon_template_path(slot, name), self._weapon_frame_store, sel)
-        self.weapon_result.setText(f"Saved: {path}")
+        self.weapon_result.setText(f"✓ Saved {slot} '{name}': {path}")
 
     # -- unknown gallery -------------------------------------------------------
 

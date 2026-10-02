@@ -156,15 +156,18 @@ detectors:
     ocr: { contains: [FFA, FREE FOR ALL] }
     confirm_frames: 1
   health_bar:
+    # Calibrated 2026-10-02 from a real RIVALS frame (2560x1440): the lime-green
+    # bar bottom-left. Fractions, so it carries over to other resolutions.
     method: color
-    roi: [0.30, 0.85, 0.70, 1.0]
+    roi: [0.0, 0.84, 0.31, 1.0]
     hsv:
-      - { lower: [45, 120, 120], upper: [80, 255, 255] }
-    min_area: 0.0008
-    max_area: 0.03
-    aspect_min: 6.0
+      - { lower: [40, 150, 170], upper: [66, 255, 255] }
+    min_area: 0.0006
+    max_area: 0.013
+    aspect_min: 3.0
     aspect_max: 60.0
     confirm_frames: 2
+    params: { calibrated: 1 }
   respawn_prompt:
     method: template
     roi: [0.20, 0.50, 0.80, 1.0]

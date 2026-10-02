@@ -123,6 +123,21 @@ def stylesheet(scale: float = 1.0) -> str:
     QPushButton:hover {{
         border-color: {ACCENT};
     }}
+    QPushButton#CheckItem {{
+        border-radius: {_px(14)}px;
+        padding: {_px(5)}px {_px(12)}px;
+        color: {TEXT_MUTED};
+    }}
+    QPushButton#CheckItem[state="done"] {{
+        background: rgba(63, 185, 122, 0.18);
+        border-color: {SUCCESS};
+        color: {SUCCESS};
+    }}
+    QPushButton#CheckItem[state="captured"] {{
+        background: rgba(242, 169, 59, 0.14);
+        border-color: {ACCENT};
+        color: {ACCENT};
+    }}
     QPushButton#Primary {{
         background: {ACCENT};
         color: {BG};

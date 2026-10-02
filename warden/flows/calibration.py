@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -170,3 +171,129 @@ def calibration_gaps(app, preset, detector_templates: TemplateLibrary | None = N
             if slot not in app.loadout_ui.slots:
                 gaps.append(("warn", f"loadout picker layout for '{slot}' isn't set up"))
     return gaps
+
+
+# --------------------------------------------------------------------------- guided setup
+#
+# Plain-language description of every screen Warden needs to recognize: where
+# to go in the game to see it, and what to drag a box around once captured.
+# Used by the Calibration page's checklist and the auto-capture overlay.
+
+
+@dataclass(frozen=True)
+class ScreenGuide:
+    key: str
+    title: str
+    go_to: str          # what to do in Roblox so this screen is showing
+    box_hint: str       # what to drag a box around on the captured frame
+    required: bool      # needed just to reach an FFA match
+    shares_capture: tuple[str, ...] = ()  # other screens visible in the same capture
+
+
+SCREEN_GUIDES: tuple[ScreenGuide, ...] = (
+    ScreenGuide("lobby_play", "Lobby", "Stand in the lobby where you normally start.",
+                "the button you click to start queueing (e.g. Play)", True),
+    ScreenGuide("mode_list", "Game-mode menu", "Open the menu where you pick a game mode, with FFA showing.",
+                "something that's always on this menu, like its title", False, ("ffa_tile",)),
+    ScreenGuide("ffa_tile", "FFA option", "Same menu as above, with the FFA option visible.",
+                "just the FFA tile / button", True),
+    ScreenGuide("health_bar", "In a match", "Be in a match (alive) with your HUD showing.",
+                "the green health bar (bottom-left)", True),
+    ScreenGuide("weapon_picker", "Weapon picker", "Open the weapon / loadout picker.",
+                "the picker's title or another part that's always there", False),
+    ScreenGuide("respawn_prompt", "Respawn screen", "Die in a match and leave the respawn prompt up.",
+                "the respawn prompt / button", False),
+    ScreenGuide("match_end", "Match results", "Stay on the end-of-match results screen.",
+                "the results / victory banner", False),
+)
+GUIDES_BY_KEY = {g.key: g for g in SCREEN_GUIDES}
+
+# The auto-capture walk-through: one capture per step; a step can fill
+# several screens at once (the mode menu shows both mode_list and ffa_tile).
+CAPTURE_STEPS: tuple[tuple[str, ...], ...] = (
+    ("lobby_play",), ("mode_list", "ffa_tile"), ("health_bar",), ("weapon_picker",),
+    ("respawn_prompt",), ("match_end",),
+)
+
+# Solid-colored bars are learned by color (they change length, so an image
+# template wouldn't match at low health); everything else - buttons, tiles,
+# banners, mostly text + icons - is learned as an image template.
+COLOR_LEARNED = frozenset({"health_bar"})
+
+MAX_SELECTION_AREA = 0.35  # a "template" covering most of the screen matches nothing useful
+
+
+def selection_problem(sel: tuple[float, float, float, float] | None) -> str | None:
+    """A human-readable reason a drag selection is unusable, or None if it's fine."""
+    if sel is None:
+        return "Drag a box on the picture first."
+    x1, y1, x2, y2 = sel
+    area = (x2 - x1) * (y2 - y1)
+    if area > MAX_SELECTION_AREA:
+        return ("That box covers most of the screen - drag a small box around just the "
+                "thing described above, so Warden learns what it looks like.")
+    if (x2 - x1) < 0.004 or (y2 - y1) < 0.004:
+        return "That box is too small - drag a slightly bigger one."
+    return None
+
+
+def expand_roi(sel: tuple[float, float, float, float], pad: float = 0.12) -> tuple[float, float, float, float]:
+    """Where to *look* for something boxed at ``sel``: the box plus a margin, so
+    small layout shifts (window size, UI animation) still match."""
+    x1, y1, x2, y2 = sel
+    w, h = x2 - x1, y2 - y1
+    px, py = max(w * 0.5, pad), max(h * 0.5, pad)
+    clamp = lambda v: min(max(v, 0.0), 1.0)  # noqa: E731
+    return (clamp(x1 - px), clamp(y1 - py), clamp(x2 + px), clamp(y2 + py))
+
+
+def calibration_capture_path(screen: str) -> Path:
+    """Where auto-capture stores the raw screenshot for a screen."""
+    from warden import paths
+
+    return paths.data_dir("calibration") / f"{screen}.png"
+
+
+def is_screen_calibrated(app, name: str, templates: TemplateLibrary) -> bool:
+    cfg = app.detectors.get(name)
+    if cfg is None or not cfg.enabled:
+        return False
+    if cfg.method == "template":
+        return cfg.template is not None and templates.exists(cfg.template.path)
+    return bool(cfg.params.get("calibrated"))
+
+
+def quick_calibrate(app, name: str, frame: np.ndarray, sel: tuple[float, float, float, float],
+                    templates: TemplateLibrary) -> tuple[DetectorConfig, str]:
+    """One-click calibration of ``name`` from a box on ``frame``.
+
+    Color detectors (e.g. health_bar) learn the box's colors; everything else
+    learns the box as an image template. Either way the detector then only
+    looks near where the box was. Returns (new config, short description).
+    """
+    from warden.config.schema import TemplateSpec
+
+    cfg = app.detectors[name]
+    roi = expand_roi(sel)
+    params = {**cfg.params, "calibrated": 1.0}
+    if name in COLOR_LEARNED:
+        lower, upper = sample_hsv_from_selection(frame, sel)
+        area = (sel[2] - sel[0]) * (sel[3] - sel[1])
+        aspect = ((sel[2] - sel[0]) * frame.shape[1]) / max((sel[3] - sel[1]) * frame.shape[0], 1)
+        new = cfg.model_copy(update={
+            "hsv": [HSVRange(lower=tuple(lower), upper=tuple(upper))], "fallback_hsv": [],
+            "roi": ROI(x1=roi[0], y1=roi[1], x2=roi[2], y2=roi[3]),
+            "min_area": min(cfg.min_area, area * 0.15), "max_area": max(min(area * 3.0, 1.0), cfg.min_area),
+            "aspect_min": max(min(aspect * 0.3, cfg.aspect_min), 0.05),
+            "aspect_max": max(aspect * 2.5, cfg.aspect_max),
+            "params": params,
+        })
+        return new, f"learned its colors (H {lower[0]}-{upper[0]})"
+    rel = cfg.template.path if cfg.template is not None else f"templates/{name}.png"
+    save_template_from_frame(templates, rel, frame, sel)
+    threshold = cfg.template.threshold if cfg.template is not None else 0.78
+    new = cfg.model_copy(update={
+        "method": "template", "template": TemplateSpec(path=rel, threshold=threshold),
+        "roi": ROI(x1=roi[0], y1=roi[1], x2=roi[2], y2=roi[3]), "params": params,
+    })
+    return new, "saved what it looks like"

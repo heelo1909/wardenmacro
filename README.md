@@ -62,6 +62,19 @@ that one feature off — it never crashes the app.
 
 ## First run: Calibration
 
+**Quick version (recommended):** open RIVALS, then in Warden go to **Calibration** and
+click **▶ Auto-capture screens**. A small panel appears over the top-right of Roblox and
+walks you through each screen (lobby, mode menu with FFA, in a match, weapon picker, ...),
+taking each screenshot by itself after a short countdown - just go to that screen in the
+game. Afterwards, click each screen in the **Setup checklist**, drag **one small box**
+around what it describes (the hint above the picture says what), and press
+**✓ Save this screen**. It turns green when Warden can see it. Don't box the whole
+screen - Warden refuses boxes that cover most of it.
+
+The health bar ships pre-calibrated from a real RIVALS screenshot.
+
+The detailed manual steps below still work if you prefer them.
+
 Warden's detectors (what counts as "the Play button", "the health bar", "a weapon
 tile", etc.) ship as **uncalibrated placeholders** — they're reasonable guesses at
 screen layout and color, not tuned to your actual screen, resolution, or scaling.

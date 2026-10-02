@@ -33,7 +33,7 @@ from warden.platform.power import SleepGuard
 from warden.platform.input import InputController, build_methods
 from warden.platform.process import Launcher, RobloxProcess
 from warden.platform.window import FocusGate, Win32Windows, pick_client, pick_updater
-from warden.vision.capture import MssCapturer
+from warden.vision.capture import MssCapturer, WindowCapturer
 from warden.vision.detectors import Detection, FrozenDetector, WindowStateDetector, build_detectors
 from warden.vision.templates import TemplateLibrary
 
@@ -236,7 +236,9 @@ class TickLoop:
 
         self.window_backend = Win32Windows()
         self.focus_gate = FocusGate(self.window_backend)
-        self.capturer = MssCapturer()
+        # Window capture: whatever is on top of Roblox (Warden itself, chat
+        # apps) never ends up in the frame; falls back to a screen grab.
+        self.capturer = WindowCapturer(fallback=MssCapturer())
         self.humanizer = Humanizer(app.timings.jitter_pct)
         methods = build_methods(app.input.methods)
         self.input = InputController(
@@ -338,6 +340,8 @@ class TickLoop:
         if client is None:
             return False
         self.focus_gate.set_target(client.hwnd)
+        if hasattr(self.capturer, "hwnd"):
+            self.capturer.hwnd = client.hwnd
         self._client_rect = client.client if not client.client.is_empty() else None
         return True
 
@@ -386,6 +390,8 @@ class TickLoop:
 
         if client is not None:
             self.focus_gate.set_target(client.hwnd)
+            if hasattr(self.capturer, "hwnd"):
+                self.capturer.hwnd = client.hwnd
             self._client_rect = client.client if not client.client.is_empty() else None
         else:
             self._client_rect = None
