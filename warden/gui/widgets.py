@@ -82,15 +82,21 @@ class ImageCanvas(QLabel):
     (HANDOFF §7.4's "click/drag to sample" / "coordinate picker"). Selection
     is tracked in *original frame* pixels regardless of how the pixmap is
     scaled to fit the label, so ``selection_fractions()`` is always correct.
+
+    Drawing is done entirely by hand in ``paintEvent`` (not via QLabel's own
+    ``setPixmap``/``setScaledContents``) so the displayed image is always
+    scaled to fit the widget, aspect-preserved - QLabel's default pixmap
+    rendering shows it at native resolution instead, which for a real
+    screen capture is almost always larger than the widget and so just
+    looks cropped to whatever corner happens to be visible.
     """
 
     def __init__(self):
         super().__init__()
         self.setMinimumSize(320, 180)
-        self.setAlignment(Qt.AlignCenter)
         self.setStyleSheet("background:#000; border-radius:8px;")
         self._frame_size: tuple[int, int] | None = None  # (w, h) of the original frame
-        self._pixmap_rect = None  # where the scaled pixmap sits inside this label
+        self._pixmap = None  # the original, full-resolution QPixmap
         self._drag_start = None
         self._selection_px: tuple[int, int, int, int] | None = None  # in ORIGINAL frame pixels
 
@@ -101,29 +107,37 @@ class ImageCanvas(QLabel):
         h, w = frame.shape[:2]
         self._frame_size = (w, h)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) if frame.ndim == 3 else frame
-        image = QImage(rgb.data, w, h, rgb.strides[0], QImage.Format_RGB888)
-        self.setPixmap(QPixmap.fromImage(image))
+        rgb = rgb.copy()  # own the memory - QImage doesn't copy the buffer it's given
+        image = QImage(rgb.data, w, h, rgb.strides[0], QImage.Format_RGB888).copy()
+        self._pixmap = QPixmap.fromImage(image)
         self._selection_px = None
         self.update()
 
-    def _frame_to_label(self, fx: int, fy: int) -> tuple[int, int]:
-        if not self._frame_size or not self.pixmap():
-            return (fx, fy)
-        pm = self.pixmap()
-        scale = min(self.width() / pm.width(), self.height() / pm.height(), 1.0) if pm.width() else 1.0
-        disp_w, disp_h = pm.width() * scale, pm.height() * scale
+    def _display_geometry(self) -> tuple[float, float, float, float, float] | None:
+        """How ``self._pixmap`` is scaled/positioned to fit this widget: (disp_w, disp_h, ox, oy, scale)."""
+        if self._pixmap is None or self._pixmap.isNull():
+            return None
+        pw, ph = self._pixmap.width(), self._pixmap.height()
+        if pw <= 0 or ph <= 0 or self.width() <= 0 or self.height() <= 0:
+            return None
+        scale = min(self.width() / pw, self.height() / ph)
+        disp_w, disp_h = pw * scale, ph * scale
         ox, oy = (self.width() - disp_w) / 2, (self.height() - disp_h) / 2
-        fscale_x = disp_w / self._frame_size[0]
-        fscale_y = disp_h / self._frame_size[1]
-        return (int(ox + fx * fscale_x), int(oy + fy * fscale_y))
+        return (disp_w, disp_h, ox, oy, scale)
 
-    def _label_to_frame(self, lx: int, ly: int) -> tuple[int, int]:
-        if not self._frame_size or not self.pixmap():
-            return (lx, ly)
-        pm = self.pixmap()
-        scale = min(self.width() / pm.width(), self.height() / pm.height(), 1.0) if pm.width() else 1.0
-        disp_w, disp_h = pm.width() * scale, pm.height() * scale
-        ox, oy = (self.width() - disp_w) / 2, (self.height() - disp_h) / 2
+    def _frame_to_label(self, fx: float, fy: float) -> tuple[float, float]:
+        geo = self._display_geometry()
+        if geo is None or not self._frame_size:
+            return (fx, fy)
+        disp_w, disp_h, ox, oy, _scale = geo
+        fw, fh = self._frame_size
+        return (ox + fx / fw * disp_w, oy + fy / fh * disp_h)
+
+    def _label_to_frame(self, lx: float, ly: float) -> tuple[int, int]:
+        geo = self._display_geometry()
+        if geo is None or not self._frame_size:
+            return (int(lx), int(ly))
+        disp_w, disp_h, ox, oy, _scale = geo
         fw, fh = self._frame_size
         fx = (lx - ox) / disp_w * fw if disp_w else 0
         fy = (ly - oy) / disp_h * fh if disp_h else 0
@@ -152,16 +166,19 @@ class ImageCanvas(QLabel):
         return px_rect_to_fractions(x1, y1, x2, y2, w, h)
 
     def paintEvent(self, event) -> None:
-        super().paintEvent(event)
-        if self._selection_px is None:
-            return
         from PySide6.QtGui import QColor, QPainter, QPen
 
         painter = QPainter(self)
-        painter.setPen(QPen(QColor("#F2A93B"), 2))
-        x1, y1 = self._frame_to_label(*self._selection_px[:2])
-        x2, y2 = self._frame_to_label(*self._selection_px[2:])
-        painter.drawRect(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
+        painter.fillRect(self.rect(), QColor("#000000"))
+        geo = self._display_geometry()
+        if self._pixmap is not None and geo is not None:
+            disp_w, disp_h, ox, oy, _scale = geo
+            painter.drawPixmap(int(ox), int(oy), int(disp_w), int(disp_h), self._pixmap)
+        if self._selection_px is not None:
+            painter.setPen(QPen(QColor("#F2A93B"), 2))
+            x1, y1 = self._frame_to_label(*self._selection_px[:2])
+            x2, y2 = self._frame_to_label(*self._selection_px[2:])
+            painter.drawRect(int(min(x1, x2)), int(min(y1, y2)), int(abs(x2 - x1)), int(abs(y2 - y1)))
 
 
 def row(*widgets: QWidget, stretch_last: bool = False, spacing: int = 10) -> QWidget:
