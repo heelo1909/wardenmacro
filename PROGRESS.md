@@ -98,6 +98,39 @@ two test files that were accidentally writing to the real checked-in
 
 ---
 
+## Post-Phase-9 fixes (user testing, 2026-10-01)
+
+User tried it for real and reported two things, both now fixed and committed:
+
+1. **Calibration preview showed only a cropped corner of the capture**, not the whole
+   screen. Root cause: `ImageCanvas` called `QLabel.setPixmap()` without scaling, so Qt
+   rendered the capture at native resolution clipped to the small preview widget. Fixed
+   by having `ImageCanvas` do its own `paintEvent` drawing (scaled, aspect-preserved)
+   instead of relying on QLabel's default pixmap rendering. Verified offscreen with a
+   bordered test frame (commit `1eb4add`).
+2. **No way to actually capture a weapon's template through the GUI.** The Calibration
+   wizard only ever saved *detector* anchor templates (`lobby_play`, `mode_list`, etc.)
+   - there was no path to create the `templates/weapons/<slot>/<name>.png` files the real
+   loadout transaction looks for, so a preset's loadout (e.g. "Grenade Launcher") could
+   never actually be fulfilled no matter what was calibrated. Added a **Weapon templates**
+   tab (pick slot + weapon name, capture, drag-select, save) using the same path
+   convention `flows/loadout.py` reads from (commit `d1cda95`).
+
+These explain exactly what the user hit: it relaunched Roblox fine (that part needs no
+calibration) but never clicked Play/FFA (lobby_play/mode_list/ffa_tile detectors are
+still uncalibrated placeholders - expected until Calibration is actually run) and never
+selected Grenade Launcher (impossible before the weapon-template gap was fixed - now
+possible). **User still needs to actually run Calibration for lobby_play, mode_list,
+ffa_tile, health_bar, respawn_prompt, weapon_picker, and now a weapon template for each
+loadout slot** - nothing was pre-calibrated on their machine; that was never in scope for
+an autonomous build (it inherently requires their own screen).
+
+335 tests passing, 0 failures/errors - confirmed via JUnit XML output
+(`--junit-xml`), not dot-counting: pytest's terminal summary line wasn't
+reliably showing up in this environment's captured output on every run this
+session, so test counts quoted earlier in this file (e.g. "341" at the end of
+Phase 9) were dot-count estimates and may be slightly off from the true count.
+
 ## ALL PHASES COMPLETE (0 through 9)
 
 What's left, for the user:
