@@ -187,6 +187,25 @@ before these changes. **Needs a re-run on Windows** and a **PyInstaller rebuild*
 (`dist\Warden` is still the old build). Live Roblox verification not possible from
 this session (no desktop control) - next real run should start with Calibration.
 
+## Clip review (2026-10-02, 18:31 run)
+
+User clip + log: Warden sat in LOADING ~60s in the lobby doing nothing, then only got
+going because the uncalibrated `midgame_join` green-button guess fired on the Play
+button. Root causes, all fixed and verified against frames from the clip:
+- **lobby_play template included the 3D world around the button** (scored 0.72 < 0.78
+  as the camera moved). New `flows/calibration.py: tighten_to_button` shrinks a box to
+  the solid button inside it on Save; user's template tightened -> 0.97-0.99.
+- **mode_list was never calibrated**, so after Play nothing moved to MODE_SELECT.
+  Template = RIVALS' red close (X) button on the mode menu, ROI top-right, thr 0.9
+  (0.99 on menu frames, <=0.65 elsewhere).
+- **ffa_tile template was cut from the wrong screen** (0.67 on the real menu). Now the
+  "Free For All" title (0.995 vs <=0.34 elsewhere).
+- Mode-menu scrolling used the mode_list box centre (now the X button) -> scroll at
+  screen centre instead. `midgame_join` disabled by default. Stronger refocus
+  (AttachThreadInput fallback) for "Roblox is not the foreground window".
+- These three templates now **ship in the repo** (`templates/`, bundled by warden.spec)
+  and default.yaml uses them, so a fresh install works without calibrating them.
+
 ## Weapons + movement round (2026-10-02 evening)
 
 User: queueing into FFA works now, but "it doesn't select Grenade Launcher" and "it

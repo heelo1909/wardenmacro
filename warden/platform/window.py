@@ -224,6 +224,24 @@ class Win32Windows:
         u.keybd_event(0x12, 0, 2, 0)
         u.SetForegroundWindow(hwnd)
         u.BringWindowToTop(hwnd)
+        if self.foreground() != hwnd:
+            # Stronger fallback: briefly share input state with whichever
+            # thread owns the foreground window, which Windows accepts as
+            # "the user's last input came from us".
+            try:
+                kernel32 = ctypes.WinDLL("kernel32")
+                fg = u.GetForegroundWindow()
+                fg_thread = u.GetWindowThreadProcessId(fg, None) if fg else 0
+                me = kernel32.GetCurrentThreadId()
+                if fg_thread and fg_thread != me:
+                    u.AttachThreadInput(me, fg_thread, True)
+                    try:
+                        u.SetForegroundWindow(hwnd)
+                        u.BringWindowToTop(hwnd)
+                    finally:
+                        u.AttachThreadInput(me, fg_thread, False)
+            except Exception:
+                log.debug("AttachThreadInput focus fallback failed", exc_info=True)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.foreground() == hwnd:

@@ -247,6 +247,41 @@ def expand_roi(sel: tuple[float, float, float, float], pad: float = 0.12) -> tup
     return (clamp(x1 - px), clamp(y1 - py), clamp(x2 + px), clamp(y2 + py))
 
 
+def tighten_to_button(frame: np.ndarray, sel: tuple[float, float, float, float],
+                      inset_px: int = 3) -> tuple[float, float, float, float]:
+    """Shrink a box to the solid, brightly colored button inside it.
+
+    People box a button with some margin; that margin is the 3D game world,
+    which changes every time the camera moves, so the template stops matching
+    (2026-10-02: the user's Play-button template scored 0.72 with its margin,
+    0.97 tightened). If the box doesn't contain one solid colored block, it's
+    returned unchanged.
+    """
+    import cv2
+
+    rect = frame_rect(frame)
+    x1, y1, x2, y2 = rect.roi_px(sel)
+    crop = frame[y1:y2, x1:x2]
+    if crop.size == 0 or crop.ndim != 3:
+        return sel
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    mask = ((hsv[:, :, 1] > 110) & (hsv[:, :, 2] > 110)).astype(np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
+    if count <= 1:
+        return sel
+    i = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    bx, by, bw, bh, area = stats[i]
+    sel_area = crop.shape[0] * crop.shape[1]
+    # Must be a solid block (not scattered pixels), clearly smaller than the box.
+    if area < 0.15 * sel_area or area < 0.6 * bw * bh or bw * bh > 0.92 * sel_area:
+        return sel
+    if bw <= 2 * inset_px + 4 or bh <= 2 * inset_px + 4:
+        return sel
+    nx1, ny1 = x1 + bx + inset_px, y1 + by + inset_px
+    nx2, ny2 = x1 + bx + bw - inset_px, y1 + by + bh - inset_px
+    return (nx1 / rect.width, ny1 / rect.height, nx2 / rect.width, ny2 / rect.height)
+
+
 def calibration_capture_path(screen: str) -> Path:
     """Where auto-capture stores the raw screenshot for a screen."""
     from warden import paths
@@ -290,6 +325,8 @@ def quick_calibrate(app, name: str, frame: np.ndarray, sel: tuple[float, float, 
         })
         return new, f"learned its colors (H {lower[0]}-{upper[0]})"
     rel = cfg.template.path if cfg.template is not None else f"templates/{name}.png"
+    sel = tighten_to_button(frame, sel)
+    roi = expand_roi(sel)
     save_template_from_frame(templates, rel, frame, sel)
     threshold = cfg.template.threshold if cfg.template is not None else 0.78
     new = cfg.model_copy(update={

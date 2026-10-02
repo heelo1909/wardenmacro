@@ -86,6 +86,10 @@ def test_capture_live_works_without_a_running_session(ctx, tmp_path, monkeypatch
 
 
 def test_saving_a_template_for_a_color_detector_switches_it_to_template(ctx, tmp_path):
+    from warden.config.schema import HSVRange
+
+    ctx.app.detectors["lobby_play"] = ctx.app.detectors["lobby_play"].model_copy(update={
+        "method": "color", "template": None, "hsv": [HSVRange(lower=(40, 100, 100), upper=(80, 255, 255))]})
     page = CalibrationPage(ctx, templates_root=tmp_path)
     assert ctx.app.detectors["lobby_play"].method == "color"
     page._frame = blank()
@@ -107,16 +111,16 @@ def test_save_template_without_selection_warns(ctx, tmp_path):
 
 def test_sample_hsv_applies_to_detector_config_and_persists(ctx, tmp_path):
     page = CalibrationPage(ctx, templates_root=tmp_path)
-    page.screen_combo.setCurrentText("lobby_play")
+    page.screen_combo.setCurrentText("health_bar")
     page._frame = draw_frac_rect(blank(), (0.2, 0.2, 0.8, 0.8), GREEN_BGR)
     page.canvas.set_frame(page._frame)
     page.canvas._selection_px = (
         int(0.2 * page._frame.shape[1]), int(0.2 * page._frame.shape[0]),
         int(0.8 * page._frame.shape[1]), int(0.8 * page._frame.shape[0]),
     )
-    original = ctx.app.detectors["lobby_play"].hsv[0].lower
+    original = ctx.app.detectors["health_bar"].hsv[0].lower
     page._sample_hsv()
-    assert ctx.app.detectors["lobby_play"].hsv[0].lower != original
+    assert ctx.app.detectors["health_bar"].hsv[0].lower != original
     assert "applied" in page.result_label.text().lower()
     assert ctx.app_path.exists()
 

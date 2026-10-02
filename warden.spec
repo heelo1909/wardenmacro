@@ -28,7 +28,7 @@ a = Analysis(
     ["scripts/run_warden.py"],
     pathex=["."],
     binaries=[],
-    datas=[("config", "config")],
+    datas=[("config", "config"), ("templates", "templates")],
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},

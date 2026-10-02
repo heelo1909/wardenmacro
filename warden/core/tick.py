@@ -148,7 +148,10 @@ class LiveActions:
         self.input.click_frac(*self._center("lobby_play", (0.5, 0.9)), what="lobby play button")
 
     def scroll_mode_list(self) -> None:
-        self.input.wheel(-2, at=self._center("mode_list", (0.5, 0.5)))
+        # Scroll over the middle of the menu - the mode_list detector's own box
+        # may be a corner marker (e.g. RIVALS' red close button), where the
+        # wheel wouldn't scroll the list.
+        self.input.wheel(-2, at=(0.5, 0.55))
 
     def click_ffa(self) -> None:
         self.input.click_frac(*self._center("ffa_tile"), what="FFA tile")
