@@ -187,6 +187,35 @@ before these changes. **Needs a re-run on Windows** and a **PyInstaller rebuild*
 (`dist\Warden` is still the old build). Live Roblox verification not possible from
 this session (no desktop control) - next real run should start with Calibration.
 
+## Weapons + movement round (2026-10-02 evening)
+
+User: queueing into FFA works now, but "it doesn't select Grenade Launcher" and "it
+doesn't move or shoot anything". Their latest frames (diagnostics/loadout 18:09-18:11)
+showed RIVALS' picker: a vertical list of weapon *names* per slot, walked in order
+primary -> secondary -> melee -> utility (clicking a weapon advances; the active slot's
+square stays centred at the top). No tabs - the "tabs" loadout model could never work.
+
+- **In-match behavior (HANDOFF 6.7) was never implemented** - `IN_MATCH` did nothing.
+  New `behaviors/profiles.py: InMatchBehavior` with `idle_nudge`, `patrol`, `fire_loop`,
+  new `fight` (walk + shoot), `hide_spot`; abilities; immediate nudge on idle warning.
+  Non-blocking walking (key down now, key up on a later tick). State machine hooks:
+  `enter_match` / `in_match_tick` / `leave_match` (keys always released on leaving
+  IN_MATCH and on Stop). `InputController.fire()` clicks without moving the cursor.
+  `GameKeys` gained `slot_keys` (1-4), `move` (WASD), `jump`. Settings: profile hint +
+  "Shoot every (s)". Glass Wrap preset now `fight`, shoot every 4s.
+- **Sequential picker:** `LoadoutUI.mode: sequential` + `list_roi`;
+  `flows/loadout.py: SequentialLoadoutTransaction` (scroll to top, find the name, click,
+  verify the list moved on; stops cleanly if a slot can't be picked).
+- **Learn my loadout** (`gui/loadout_teacher.py`): on-top panel; user picks their weapons
+  in-game normally; a pynput click listener + rolling window capture crops the clicked
+  row (`learn_row_template`) as that slot's template. Buttons on Calibration's checklist
+  and Weapon templates tab.
+- Bug: after a failed transaction, `run_loadout` reset and re-ran it every tick
+  (re-clicking the picker). Now one transaction per LOADOUT visit (`begin_loadout`).
+- User's own files: `loadout_ui.mode: sequential`, profile `fight`; Grenade Launcher
+  (primary) and Grenade (utility) templates pre-made from their frames (cross-match
+  scores 0.96 vs <=0.62 for other rows). Secondary/melee still need Learn my loadout.
+
 ## Calibration UX round (2026-10-02)
 
 User: "I did it, it just said warning, doesn't work" + "make it take the screenshots

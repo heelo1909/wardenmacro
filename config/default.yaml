@@ -110,6 +110,11 @@ weapon_templates_dir: templates/weapons
 # grid_roi is where weapon tiles can be found after clicking a slot's tab;
 # verify_roi is the HUD readout that shows what's currently equipped in that slot.
 loadout_ui:
+  # RIVALS: one weapon list per slot, primary -> secondary -> melee -> utility;
+  # clicking a weapon moves on to the next slot. list_roi = where the list is.
+  # Measured from a real 2560x1440 picker frame (2026-10-02).
+  mode: sequential
+  list_roi: [0.37, 0.22, 0.63, 1.0]
   max_search_scrolls: 6
   verify_threshold: 0.75
   scroll_notches: 2

@@ -198,6 +198,11 @@ class LoadoutSlotUI(_Model):
 
 
 class LoadoutUI(_Model):
+    # "tabs": click each slot's tab, then its weapon (generic picker).
+    # "sequential": RIVALS-style - one list per slot, in order primary ->
+    # secondary -> melee -> utility; clicking a weapon moves to the next slot.
+    mode: Literal["tabs", "sequential"] = "tabs"
+    list_roi: ROI = Field(default_factory=lambda: ROI(x1=0.37, y1=0.22, x2=0.63, y2=1.0))
     slots: dict[str, LoadoutSlotUI] = Field(default_factory=dict)
     max_search_scrolls: Annotated[int, Field(ge=0, le=30)] = 6
     verify_threshold: Frac = 0.75
@@ -410,7 +415,10 @@ class Loadout(_Model):
 
 
 class Behavior(_Model):
-    profile: Literal["idle_nudge", "patrol", "fire_loop", "hide_spot"] = "idle_nudge"
+    # idle_nudge: tiny movement every anti_idle_seconds | patrol: keep walking/strafing/looking
+    # fire_loop: idle_nudge + shoot every fire_every_seconds | fight: patrol + shooting
+    # hide_spot: walk hide_path after each spawn, then idle_nudge
+    profile: Literal["idle_nudge", "patrol", "fire_loop", "fight", "hide_spot"] = "idle_nudge"
     anti_idle_seconds: Annotated[float, Field(ge=10, le=1100)] = 75
     jitter_pct: Annotated[float, Field(ge=0, le=60)] = 15
     fire_slot: Literal["primary", "secondary", "melee", "utility"] = "primary"
@@ -432,6 +440,11 @@ class Abilities(_Model):
 class GameKeys(_Model):
     respawn: str = "SPACE"
     loadout: str = "M"
+    # Number-row keys that equip each loadout slot in a match.
+    slot_keys: dict[str, str] = Field(default_factory=lambda: {
+        "primary": "1", "secondary": "2", "melee": "3", "utility": "4"})
+    move: tuple[str, str, str, str] = ("W", "A", "S", "D")
+    jump: str = "SPACE"
 
 
 class Preset(_Model):

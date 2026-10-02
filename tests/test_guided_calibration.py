@@ -122,3 +122,44 @@ def test_page_quick_save_refuses_a_giant_box(ctx, tmp_path):
     page.canvas._selection_px = (0, 0, 400, 200)
     page._quick_save()
     assert "most of the screen" in page.result_label.text()
+
+
+def test_loadout_teacher_learns_from_clicks_on_the_list(qapp, tmp_path):
+    import time
+
+    from tests.test_behaviors_and_sequential_loadout import picker_frame
+    from warden.config.schema import LoadoutUI
+    from warden.flows.loadout import learn_row_template
+    from warden.geometry import Rect
+    from warden.gui.loadout_teacher import LoadoutTeacher
+
+    ui = LoadoutUI(mode="sequential")
+    saved, finished = {}, []
+    frame = picker_frame(["Random", "Energy Rifle", "Grenade Launcher"])
+
+    class Cap:
+        hwnd = 0
+
+        def grab(self, rect):
+            return frame
+
+    def learn(slot, weapon, f, fx, fy):
+        crop = learn_row_template(f, fx, fy, ui)
+        if crop is None:
+            return False
+        saved[slot] = (weapon, crop.shape)
+        return True
+
+    t = LoadoutTeacher({"primary": "Grenade Launcher", "secondary": "Slingshot"}, learn=learn,
+                       on_finished=finished.append, find_client=lambda: (1, Rect(0, 0, 1280, 720)),
+                       make_capturer=Cap)
+    t._capture()
+    time.sleep(0.05)
+    now = time.monotonic()
+    t.handle_click(now, 100, 300)          # off the list -> ignored
+    assert t.current_slot() == "primary"
+    t.handle_click(now, 640, 180 + 2 * 60 + 26)  # the Grenade Launcher row
+    assert saved["primary"][0] == "Grenade Launcher"
+    assert t.current_slot() == "secondary"
+    t.finish()
+    assert finished == [["primary"]]

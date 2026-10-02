@@ -339,6 +339,21 @@ class InputController:
             self._emit("input.key", f"pressed {k}", "debug", key=k)
         return ok
 
+    def fire(self, hold_s: float, button: str = "left") -> bool:
+        """Press and hold a mouse button where the cursor already is - in
+        first person that's the crosshair; moving the cursor would jerk the
+        camera instead."""
+
+        def body():
+            self._do("button", button, True)
+            self.sleep(max(hold_s, 0.03))
+            self._do("button", button, False)
+
+        ok = self._guarded(f"fire ({hold_s:.2f}s)", body)
+        if ok:
+            self._emit("input.fire", f"fired for {hold_s:.2f}s", "debug")
+        return ok
+
     def key_down(self, key: str) -> bool:
         k = normalize_key(key)
 

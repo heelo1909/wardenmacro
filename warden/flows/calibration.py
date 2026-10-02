@@ -167,8 +167,8 @@ def calibration_gaps(app, preset, detector_templates: TemplateLibrary | None = N
                 continue
             if not weapon_templates.exists(weapon_template_path(slot, weapon)):
                 gaps.append(("warn", f"no weapon template for {slot} '{weapon}' - Warden can't select it "
-                                     f"(Calibration > Weapon templates)"))
-            if slot not in app.loadout_ui.slots:
+                                     f"(Calibration > Learn my loadout)"))
+            if app.loadout_ui.mode == "tabs" and slot not in app.loadout_ui.slots:
                 gaps.append(("warn", f"loadout picker layout for '{slot}' isn't set up"))
     return gaps
 

@@ -120,6 +120,9 @@ class GameActions(Protocol):
     def on_incident(self, cause: str) -> None: ...
     def on_recovered(self) -> None: ...
     def on_stuck(self, message: str) -> None: ...
+    def enter_match(self) -> None: ...
+    def in_match_tick(self, idle_warning: bool) -> None: ...
+    def leave_match(self) -> None: ...
 
 
 class NullActions:
@@ -140,6 +143,16 @@ class NullActions:
     def on_incident(self, cause: str) -> None: pass
     def on_recovered(self) -> None: pass
     def on_stuck(self, message: str) -> None: pass
+    def enter_match(self) -> None: pass
+    def in_match_tick(self, idle_warning: bool) -> None: pass
+    def leave_match(self) -> None: pass
+
+
+def _call(actions, name: str, *args) -> None:
+    """Optional GameActions hooks: older/fake action objects may not have them."""
+    fn = getattr(actions, name, None)
+    if fn is not None:
+        fn(*args)
 
 
 # --------------------------------------------------------------------------- confirmers
@@ -258,6 +271,9 @@ class StateMachine:
             return
         t = Transition(self.state, new_state, cause, now)
         log.info("state %s -> %s (%s)", self.state.value, new_state.value, cause)
+        if self.state is State.IN_MATCH:
+            # Never leave a movement key held down when we stop controlling the character.
+            _call(self.actions, "leave_match")
         self.state = new_state
         self._entered_at = now
         if new_state is State.MODE_SELECT:
@@ -265,6 +281,8 @@ class StateMachine:
         if new_state is State.DEAD:
             self._respawn.reset()
             self.counters.respawns += 1
+        if new_state is State.LOADOUT:
+            _call(self.actions, "begin_loadout")
         if new_state is State.LOBBY:
             self._lobby_retries = 0
             self._last_play_click = None
@@ -278,6 +296,7 @@ class StateMachine:
             # owns recovery/backoff state gets told the incident is over.
             self._disconnect.reset()
             self.actions.on_recovered()
+            _call(self.actions, "enter_match")
         if self.on_transition:
             self.on_transition(t)
 
@@ -545,6 +564,8 @@ class StateMachine:
             # Health bar missing but nothing else fired; wait rather than
             # thrashing state - the unknown-screen timer covers the stuck case.
             return
+        # Alive in a match: move / shoot / abilities / anti-idle (section 6.7).
+        _call(self.actions, "in_match_tick", s.idle_warning)
 
     def _handle_dead(self, s: Signals, now: float) -> None:
         if self._since_entry(now) >= self.timeouts.dead:

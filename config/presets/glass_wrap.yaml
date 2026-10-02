@@ -13,7 +13,8 @@ loadout:                    # placeholders - to be confirmed
   melee: Fists
   utility: Grenade
 behavior:
-  profile: idle_nudge
+  profile: fight            # walk around + shoot (idle_nudge = barely move)
+  fire_every_seconds: 4
   anti_idle_seconds: 75
   jitter_pct: 15
 abilities:

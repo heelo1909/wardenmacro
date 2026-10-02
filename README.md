@@ -73,6 +73,13 @@ screen - Warden refuses boxes that cover most of it.
 
 The health bar ships pre-calibrated from a real RIVALS screenshot.
 
+**Weapons:** click **🎯 Learn my loadout**, open the weapon picker in RIVALS (start of an
+FFA match or the shooting range) and pick your weapons yourself like normal - Warden
+watches your clicks and learns each one. After that it picks them for you every match.
+
+**Moving/shooting:** Settings → Behavior → Profile. `fight` walks around and shoots,
+`patrol` only walks, `fire_loop` stands and shoots, `idle_nudge` barely moves.
+
 The detailed manual steps below still work if you prefer them.
 
 Warden's detectors (what counts as "the Play button", "the health bar", "a weapon

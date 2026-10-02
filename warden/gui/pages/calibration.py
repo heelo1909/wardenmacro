@@ -93,7 +93,10 @@ class CalibrationPage(QWidget):
             "it describes, and press Save this screen. Green = Warden can see it."))
         self.auto_btn = QPushButton("▶  Auto-capture screens", objectName="Primary")
         self.auto_btn.clicked.connect(self.start_guided_capture)
-        inner.addWidget(flow(self.auto_btn))
+        self.teach_btn = QPushButton("🎯  Learn my loadout")
+        self.teach_btn.setToolTip("Pick your weapons once yourself in RIVALS - Warden watches and learns them.")
+        self.teach_btn.clicked.connect(self.start_loadout_teacher)
+        inner.addWidget(flow(self.auto_btn, self.teach_btn))
         self.checklist_buttons: dict[str, QPushButton] = {}
         for guide in SCREEN_GUIDES:
             btn = QPushButton(guide.title)
@@ -159,6 +162,65 @@ class CalibrationPage(QWidget):
         if window is not self:
             window.showMinimized()
         self._guided.show()
+
+    def start_loadout_teacher(self) -> None:
+        from warden.gui.loadout_teacher import LoadoutTeacher, start_pynput_click_listener
+        from warden.vision.capture import MssCapturer, WindowCapturer, find_roblox_client
+
+        if getattr(self, "_teacher", None) is not None:
+            return
+        preset = self.ctx.preset
+        weapons = {} if preset.loadout.random else {k: v for k, v in preset.loadout.slots().items() if v}
+        if not weapons:
+            self.weapon_result.setText("Set your weapons on the Loadout page first (a preset that isn't Random).")
+            self.result_label.setText(self.weapon_result.text())
+            return
+        anchor = None
+        try:
+            found = find_roblox_client()
+            if found is not None:
+                anchor = (found[1].left, found[1].top, found[1].width, found[1].height)
+        except Exception:
+            anchor = None
+        try:
+            listener = start_pynput_click_listener
+        except Exception:
+            listener = None
+        self._teacher = LoadoutTeacher(
+            weapons, learn=self._learn_weapon, on_finished=self._on_teacher_finished,
+            find_client=find_roblox_client, make_capturer=lambda: WindowCapturer(fallback=MssCapturer()),
+            start_listener=listener, anchor=anchor)
+        window = self.window()
+        if window is not self:
+            window.showMinimized()
+        self._teacher.show()
+
+    def _learn_weapon(self, slot: str, weapon: str, frame, fx: float, fy: float) -> bool:
+        from warden.flows.loadout import learn_row_template
+
+        crop = learn_row_template(frame, fx, fy, self.ctx.app.loadout_ui)
+        if crop is None:
+            return False
+        self._library(self.ctx.app.weapon_templates_dir).save(weapon_template_path(slot, weapon), crop)
+        if self.ctx.app.loadout_ui.mode != "sequential":
+            # Learning from clicks only makes sense for RIVALS' one-list-per-slot picker.
+            self.ctx.app.loadout_ui.mode = "sequential"
+            self.ctx.save_app_config()
+        return True
+
+    def _on_teacher_finished(self, learned: list[str]) -> None:
+        self._teacher = None
+        window = self.window()
+        if window is not self:
+            window.showNormal()
+            window.raise_()
+            window.activateWindow()
+        names = ", ".join(f"{s} ({getattr(self.ctx.preset.loadout, s)})" for s in learned)
+        text = f"✓ Learned {names}. Warden will pick these at the start of each match." if learned \
+            else "No weapons were learned."
+        self.result_label.setText(text)
+        self.weapon_result.setText(text)
+        self._refresh_checklist()
 
     def _grab_for_guided(self):
         from warden.vision.capture import grab_roblox_client
@@ -490,6 +552,9 @@ class CalibrationPage(QWidget):
         save_btn = QPushButton("Save selection as this weapon's template", objectName="Primary")
         save_btn.clicked.connect(self._save_weapon_template)
         layout.addWidget(save_btn)
+        teach_btn = QPushButton("🎯  Easiest: Learn my loadout (just pick your weapons in-game)")
+        teach_btn.clicked.connect(self.start_loadout_teacher)
+        layout.addWidget(teach_btn)
         self.weapon_result = muted("")
         layout.addWidget(self.weapon_result)
 

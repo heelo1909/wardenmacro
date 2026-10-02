@@ -21,7 +21,7 @@ from warden.core.state_machine import Signals, State, StateMachine, Transition
 from warden.core.persistence import PersistenceManager
 from warden.core.scheduler import Scheduler, ShutdownCountdown, power_action
 from warden.flows.calibration import calibration_gaps, parse_contract_hours, template_library
-from warden.flows.loadout import LoadoutTransaction
+from warden.flows.loadout import LoadoutTransaction, SequentialLoadoutTransaction
 from warden.flows.recovery import RecoverySequence
 from warden.geometry import Rect
 from warden.integrations.discord_bot import BotCommands, DiscordBotRunner
@@ -70,12 +70,22 @@ class LiveActions:
         # flow needs one after each click - the per-tick frame was captured
         # before the click happened.
         self.frame_grabber = None
-        self.loadout = LoadoutTransaction(
+        transaction = (SequentialLoadoutTransaction if app.loadout_ui.mode == "sequential"
+                       else LoadoutTransaction)
+        self.loadout = transaction(
             self, weapon_templates, app.loadout_ui, get_frame=self._loadout_frame,
             diagnostics_dir=paths.data_dir("diagnostics") / "loadout",
             settle_s=app.timings.ui_settle_s, verify_attempts=3,
         )
         self.recovery = RecoverySequence(self, app.recovery, clock=time.monotonic)
+        from warden.behaviors.profiles import InMatchBehavior
+
+        self.behavior = InMatchBehavior(
+            input_ctl, preset.behavior, preset.abilities, preset.keys,
+            anti_idle=app.automation.anti_idle, abilities_enabled=app.automation.abilities,
+            humanizer=Humanizer(preset.behavior.jitter_pct),
+            on_action=lambda m: self._emit("behavior.action", m, "debug"),
+        )
 
     def update_detections(self, detections: dict[str, Detection]) -> None:
         self.detections = detections
@@ -152,10 +162,20 @@ class LiveActions:
     def press_respawn(self) -> None:
         self.input.key_tap(self.preset.keys.respawn)
 
+    def _loadout_target(self) -> dict[str, str]:
+        return self.preset.loadout.slots() if not self.preset.loadout.random else self._random_loadout()
+
+    def begin_loadout(self) -> None:
+        """The picker just opened: start one fresh transaction for this visit.
+        (Resetting whenever the last one was "done" restarted it every tick
+        after a failure, re-clicking the picker over and over.)"""
+        self.loadout.reset(self._loadout_target())
+        self._loadout_reported = False
+        self._loadout_begun = True
+
     def _start_loadout_if_idle(self) -> None:
         if self.loadout.done:
-            target = self.preset.loadout.slots() if not self.preset.loadout.random else self._random_loadout()
-            self.loadout.reset(target)
+            self.loadout.reset(self._loadout_target())
 
     def _random_loadout(self) -> dict[str, str]:
         import random
@@ -173,9 +193,13 @@ class LiveActions:
         never guesses a position, and is interruptible between slots - the
         state machine aborts this itself (death/picker-closed/disconnect).
         """
-        self._start_loadout_if_idle()
+        if not getattr(self, "_loadout_begun", False):
+            self.begin_loadout()
         done = self.loadout.tick()
+        if done and getattr(self, "_loadout_reported", False):
+            return self.loadout.result.success
         if done:
+            self._loadout_reported = True
             if self.loadout.result.success:
                 self._emit("loadout.committed", f"loadout committed ({self.loadout.result.fixes} slot(s) fixed)",
                            "success")
@@ -225,6 +249,15 @@ class LiveActions:
 
     def on_stuck(self, message: str) -> None:
         self._emit("session.stuck", message, "error")
+
+    def enter_match(self) -> None:
+        self.behavior.on_spawn()
+
+    def in_match_tick(self, idle_warning: bool) -> None:
+        self.behavior.tick(idle_warning)
+
+    def leave_match(self) -> None:
+        self.behavior.stop()
 
 
 class TickLoop:
@@ -530,6 +563,7 @@ class TickLoop:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
+        self.input.release_all()  # never leave W (or anything) held after Stop
         self._finalize_session()
 
     def _scheduled_stop(self, reason: str) -> None:
