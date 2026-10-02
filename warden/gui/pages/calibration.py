@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from warden import paths
-from warden.config.schema import DETECTOR_NAMES
+from warden.config.schema import DETECTOR_NAMES, SLOTS
 from warden.flows.calibration import (
     apply_hsv,
     apply_roi,
@@ -29,6 +29,7 @@ from warden.flows.calibration import (
     sample_hsv_from_selection,
     save_template_from_frame,
 )
+from warden.flows.loadout import weapon_template_path
 from warden.gui.context import AppContext
 from warden.gui.widgets import ImageCanvas, card, muted, page_header, row, section_label
 from warden.vision.detectors import Detector
@@ -44,6 +45,7 @@ class CalibrationPage(QWidget):
         super().__init__()
         self.ctx = ctx
         self._frame = None
+        self._weapon_frame_store = None
         # Injectable so tests never write into the real checked-in templates/
         # folder - see warden-testing-safety memory for why this matters.
         self._templates_root = templates_root or paths.repo_root()
@@ -55,6 +57,7 @@ class CalibrationPage(QWidget):
 
         tabs = QTabWidget()
         tabs.addTab(self._build_wizard_tab(), "Detector wizard")
+        tabs.addTab(self._build_weapon_tab(), "Weapon templates")
         tabs.addTab(self._build_gallery_tab(), "Unknown gallery")
         layout.addWidget(tabs, 1)
 
@@ -186,6 +189,96 @@ class CalibrationPage(QWidget):
             f"'{name}': hit={result.hit} confidence={result.confidence:.2f}"
             + (f" box={[round(v, 3) for v in result.box]}" if result.box else "")
         )
+
+    # -- weapon templates -------------------------------------------------------
+
+    def _build_weapon_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.addWidget(muted(
+            "This is what makes a specific weapon selectable in the loadout picker "
+            "(the Loadout page's 'Verify now' and the auto-equip logic both need this, "
+            "separately from the detector templates on the other tab). Open the weapon "
+            "picker in-game, land on the slot's category, capture, then drag a box "
+            "tightly around the weapon's tile - its icon and/or name."
+        ))
+
+        top_row = QHBoxLayout()
+        self.weapon_slot_combo = QComboBox()
+        self.weapon_slot_combo.addItems(list(SLOTS))
+        self.weapon_name_combo = QComboBox()
+        self.weapon_name_combo.setEditable(True)
+        self.weapon_slot_combo.currentTextChanged.connect(self._refresh_weapon_name_options)
+        top_row.addWidget(QLabel("Slot:"))
+        top_row.addWidget(self.weapon_slot_combo)
+        top_row.addWidget(QLabel("Weapon:"))
+        top_row.addWidget(self.weapon_name_combo)
+        capture_btn = QPushButton("Capture live frame")
+        capture_btn.clicked.connect(self._weapon_capture_live)
+        load_btn = QPushButton("Load image…")
+        load_btn.clicked.connect(self._weapon_load_image)
+        top_row.addWidget(capture_btn)
+        top_row.addWidget(load_btn)
+        top_row.addStretch(1)
+        layout.addLayout(top_row)
+
+        self.weapon_canvas = ImageCanvas()
+        self.weapon_canvas.setMinimumHeight(360)
+        layout.addWidget(self.weapon_canvas, 1)
+
+        save_btn = QPushButton("Save selection as this weapon's template", objectName="Primary")
+        save_btn.clicked.connect(self._save_weapon_template)
+        layout.addWidget(save_btn)
+        self.weapon_result = muted("")
+        layout.addWidget(self.weapon_result)
+
+        self._refresh_weapon_name_options(self.weapon_slot_combo.currentText())
+        return tab
+
+    def _refresh_weapon_name_options(self, slot: str) -> None:
+        self.weapon_name_combo.clear()
+        names = list(getattr(self.ctx.app.owned_weapons, slot, []) or [])
+        preset_value = getattr(self.ctx.preset.loadout, slot, "") if not self.ctx.preset.loadout.random else ""
+        if preset_value and preset_value not in names:
+            names.insert(0, preset_value)
+        self.weapon_name_combo.addItems(names)
+
+    def _weapon_capture_live(self) -> None:
+        loop = self.ctx.tick_loop
+        if loop is None or loop._client_rect is None:
+            self.weapon_result.setText("No live client window - start a session first, or load an image.")
+            return
+        self._weapon_frame_store = loop.capturer.grab(loop._client_rect)
+        self.weapon_canvas.set_frame(self._weapon_frame_store)
+        self.weapon_result.setText("Captured live frame.")
+
+    def _weapon_load_image(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Load calibration image", "", "Images (*.png *.jpg *.bmp)")
+        if not path:
+            return
+        import cv2
+
+        frame = cv2.imread(path)
+        if frame is None:
+            self.weapon_result.setText(f"Could not read {path}")
+            return
+        self._weapon_frame_store = frame
+        self.weapon_canvas.set_frame(frame)
+        self.weapon_result.setText(f"Loaded {Path(path).name}")
+
+    def _save_weapon_template(self) -> None:
+        sel = self.weapon_canvas.selection_fractions()
+        name = self.weapon_name_combo.currentText().strip()
+        if self._weapon_frame_store is None or sel is None:
+            self.weapon_result.setText("Capture a frame and drag a selection first.")
+            return
+        if not name:
+            self.weapon_result.setText("Type the weapon's name first (must match the preset exactly).")
+            return
+        slot = self.weapon_slot_combo.currentText()
+        templates = TemplateLibrary(self._templates_root / self.ctx.app.weapon_templates_dir)
+        path = save_template_from_frame(templates, weapon_template_path(slot, name), self._weapon_frame_store, sel)
+        self.weapon_result.setText(f"Saved: {path}")
 
     # -- unknown gallery -------------------------------------------------------
 

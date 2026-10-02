@@ -117,6 +117,54 @@ def test_run_detection_reports_hit_and_confidence(ctx, tmp_path):
     assert "confidence=" in page.result_label.text()
 
 
+def test_weapon_tab_name_options_prefill_from_preset_and_owned_weapons(ctx, tmp_path):
+    page = CalibrationPage(ctx, templates_root=tmp_path)
+    page.weapon_slot_combo.setCurrentText("primary")
+    names = [page.weapon_name_combo.itemText(i) for i in range(page.weapon_name_combo.count())]
+    assert "Grenade Launcher" in names  # the glass_wrap preset's primary slot
+
+
+def test_save_weapon_template_without_selection_warns(ctx, tmp_path):
+    page = CalibrationPage(ctx, templates_root=tmp_path)
+    page._save_weapon_template()
+    assert "selection" in page.weapon_result.text().lower()
+
+
+def test_save_weapon_template_without_a_name_warns(ctx, tmp_path):
+    page = CalibrationPage(ctx, templates_root=tmp_path)
+    page._weapon_frame_store = draw_frac_rect(blank(), (0.3, 0.3, 0.6, 0.6), GREEN_BGR)
+    page.weapon_canvas.set_frame(page._weapon_frame_store)
+    page.weapon_canvas._selection_px = (10, 10, 100, 50)
+    page.weapon_name_combo.setCurrentText("")
+    page._save_weapon_template()
+    assert "name" in page.weapon_result.text().lower()
+
+
+def test_save_weapon_template_saves_under_the_loadout_path(ctx, tmp_path):
+    from warden.vision.templates import TemplateLibrary
+
+    page = CalibrationPage(ctx, templates_root=tmp_path)
+    page.weapon_slot_combo.setCurrentText("primary")
+    page.weapon_name_combo.setCurrentText("Grenade Launcher")
+    frame = draw_frac_rect(blank(), (0.3, 0.3, 0.6, 0.6), GREEN_BGR)
+    page._weapon_frame_store = frame
+    page.weapon_canvas.set_frame(frame)
+    page.weapon_canvas._selection_px = (
+        int(0.3 * frame.shape[1]), int(0.3 * frame.shape[0]),
+        int(0.6 * frame.shape[1]), int(0.6 * frame.shape[0]),
+    )
+    page._save_weapon_template()
+    assert "Saved" in page.weapon_result.text()
+
+    expected = tmp_path / ctx.app.weapon_templates_dir / "primary" / "Grenade_Launcher.png"
+    assert expected.exists()
+    # The real loadout flow must be able to find it through the same path convention.
+    lib = TemplateLibrary(tmp_path / ctx.app.weapon_templates_dir)
+    from warden.flows.loadout import weapon_template_path
+
+    assert lib.get(weapon_template_path("primary", "Grenade Launcher")) is not None
+
+
 def test_unknown_gallery_lists_saved_frames(ctx, warden_home, tmp_path):
     import cv2
 
