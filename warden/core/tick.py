@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from warden import paths
-from warden.behaviors.humanize import Humanizer
+from warden.behaviors.humanize import Humanizer, post_loadout_flourish
 from warden.config.schema import AppConfig, Preset
 from warden.core.events import EventBus
 from warden.core.state_machine import Signals, State, StateMachine, Transition
@@ -32,7 +32,7 @@ from warden.platform import dpi
 from warden.platform.power import SleepGuard
 from warden.platform.input import InputController, build_methods
 from warden.platform.process import Launcher, RobloxProcess
-from warden.platform.window import FocusGate, WindowBackend, make_window_backend, pick_client, pick_updater
+from warden.platform.window import FocusGate, Win32Windows, pick_client, pick_updater
 from warden.vision.capture import MssCapturer, WindowCapturer
 from warden.vision.detectors import Detection, FrozenDetector, WindowStateDetector, build_detectors
 from warden.vision.templates import TemplateLibrary
@@ -48,7 +48,7 @@ class LiveActions:
         app: AppConfig,
         preset: Preset,
         input_ctl: InputController,
-        window_backend: WindowBackend,
+        window_backend: Win32Windows,
         launcher: Launcher,
         process: RobloxProcess,
         focus_gate: FocusGate,
@@ -194,14 +194,17 @@ class LiveActions:
     def click_play(self) -> None:
         self.input.click_frac(*self._center("lobby_play", (0.5, 0.9)), what="lobby play button")
 
-    def scroll_mode_list(self) -> None:
+    def scroll_mode_list(self) -> bool:
         # Scroll over the middle of the menu - the mode_list detector's own box
         # may be a corner marker (e.g. RIVALS' red close button), where the
         # wheel wouldn't scroll the list.
-        self.input.wheel(-2, at=(0.5, 0.55))
+        return self.input.wheel(-2, at=(0.5, 0.55))
 
-    def click_ffa(self) -> None:
-        self.input.click_frac(*self._center("ffa_tile"), what="FFA tile")
+    def click_ffa(self) -> bool:
+        return self.input.click_frac(*self._center("ffa_tile"), what="FFA tile")
+
+    def click_map_vote(self) -> bool:
+        return self.input.click_frac(*self._center("map_vote"), what="map vote (Random)")
 
     def click_midgame_join(self) -> None:
         self.input.click_frac(*self._center("midgame_join"), what="mid-game join prompt")
@@ -259,11 +262,20 @@ class LiveActions:
             if self.loadout.result.success:
                 self._emit("loadout.committed", f"loadout committed ({self.loadout.result.fixes} slot(s) fixed)",
                            "success")
+                self._post_loadout_flourish()
             else:
                 failed = [s for s, o in self.loadout.result.slots.items() if not o.verified]
                 self._emit("loadout.incomplete", f"loadout incomplete, slot(s) failed: {', '.join(failed)}", "warn")
             return self.loadout.result.success
         return False
+
+    def _post_loadout_flourish(self) -> None:
+        if not self.app.automation.post_loadout_flourish:
+            return
+        try:
+            post_loadout_flourish(self.input, self.h, self.preset.keys.jump)
+        except Exception:
+            log.exception("post-loadout flourish failed (non-fatal, skipping)")
 
     def reapply_loadout_if_due(self) -> bool:
         """Called by the respawn flow during the post-respawn switch-weapons
@@ -323,7 +335,7 @@ class TickLoop:
         self.bus = bus
         dpi.ensure_dpi_awareness()
 
-        self.window_backend = make_window_backend()
+        self.window_backend = Win32Windows()
         self.focus_gate = FocusGate(self.window_backend)
         # Window capture: whatever is on top of Roblox (Warden itself, chat
         # apps) never ends up in the frame; falls back to a screen grab.
@@ -505,7 +517,8 @@ class TickLoop:
 
         signals = Signals(
             lobby_play=confirmed("lobby_play"), mode_list=confirmed("mode_list"),
-            ffa_tile=confirmed("ffa_tile"), health_bar=confirmed("health_bar"),
+            ffa_tile=confirmed("ffa_tile"), map_vote=confirmed("map_vote"),
+            health_bar=confirmed("health_bar"),
             respawn_prompt=confirmed("respawn_prompt"), weapon_picker=confirmed("weapon_picker"),
             switch_weapons=confirmed("switch_weapons"), midgame_join=confirmed("midgame_join"),
             match_end=confirmed("match_end"), disconnect_modal=confirmed("disconnect_modal"),

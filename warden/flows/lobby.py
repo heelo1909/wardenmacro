@@ -13,8 +13,8 @@ from typing import Protocol
 
 
 class ModeSelectActions(Protocol):
-    def click_ffa(self) -> None: ...
-    def scroll_mode_list(self) -> None: ...
+    def click_ffa(self) -> bool: ...
+    def scroll_mode_list(self) -> bool: ...
 
 
 class ModeSelectSearch:
@@ -25,6 +25,7 @@ class ModeSelectSearch:
         max_attempts: int = 12,
         scroll_cooldown_s: float = 1.0,
         click_interval_s: float = 2.5,
+        retry_cooldown_s: float = 0.3,
     ):
         self.actions = actions
         self.clock = clock
@@ -35,11 +36,16 @@ class ModeSelectSearch:
         # on screen this long after a click, click it again rather than
         # sitting there until the mode-select timeout.
         self.click_interval_s = click_interval_s
+        # If a scroll gets blocked (almost always a momentary focus hiccup -
+        # see InputController._allowed), retry quickly instead of waiting out
+        # the full cooldown as if it had actually scrolled.
+        self.retry_cooldown_s = retry_cooldown_s
         self.reset()
 
     def reset(self) -> None:
         self.attempts = 0
         self._last_scroll: float = float("-inf")  # so the very first attempt scrolls immediately
+        self._next_cooldown = self.scroll_cooldown_s
         self._last_click: float | None = None
         self.clicks = 0
 
@@ -47,14 +53,25 @@ class ModeSelectSearch:
         now = self.clock() if now is None else now
         if ffa_visible:
             if self._last_click is None or now - self._last_click >= self.click_interval_s:
-                self.actions.click_ffa()
-                self._last_click = now
-                self.clicks += 1
+                if self.actions.click_ffa():
+                    self._last_click = now
+                    self.clicks += 1
+                # else: blocked (e.g. focus) - leave _last_click alone so the
+                # very next eligible tick tries again, rather than pretending
+                # a click that never landed is now "handled" for a while.
             return
         self._last_click = None
         if self.attempts >= self.max_attempts:
             return  # give up; the state machine's own timeout will bail to LOBBY
-        if now - self._last_scroll >= self.scroll_cooldown_s:
-            self.actions.scroll_mode_list()
-            self.attempts += 1
+        if now - self._last_scroll >= self._next_cooldown:
+            if self.actions.scroll_mode_list():
+                self.attempts += 1
+                self._next_cooldown = self.scroll_cooldown_s
+            else:
+                # Nothing actually happened - don't spend part of the finite
+                # attempt budget on an input that never reached the game;
+                # that's what used to turn one focus hiccup into the whole
+                # 12-attempt budget burning down and MODE_SELECT going quiet
+                # for a minute before the state timeout noticed.
+                self._next_cooldown = self.retry_cooldown_s
             self._last_scroll = now

@@ -382,6 +382,141 @@ Linux with neither), zero new ones; 47 new tests added (`tests/test_mac_platform
 plus additions to `test_window.py`/`test_gui_pages.py`/`test_main_window_session.py`),
 all passing.
 
+## Speed, FFA stuck-loop, and pause/resume round (2026-10-03)
+
+User, after running the previous round for real: weapon picking was "extremely slow",
+FFA mode-select "keeps trying to scroll down... gets in a loop", and (reported mid-round,
+after the first three fixes shipped) resuming from a pause made it "click the leave
+button... leave and keep pressing W". All three diagnosed from the user's own session
+logs and saved `unknown/` screenshots rather than guessed at.
+
+**Weapon-pick speed** (`flows/loadout.py`, `config/schema.py`):
+- `SequentialLoadoutTransaction` always scrolled a slot's list all the way back to the
+  top before searching for the weapon, even when it was already on screen - paying for a
+  scroll-to-top plus a `ui_settle_s` wait on every single slot regardless. Added a "peek"
+  stage: one match attempt against the current (unscrolled) frame before committing to
+  the top-reset; skips the reset entirely in the common case (`_try_click_match`, shared
+  with the existing "search" stage).
+- `ui_settle_s` (wait after every loadout click/scroll before re-reading the screen)
+  default cut 0.6s -> 0.35s - the user's own log showed this fixed wait, not detection,
+  was the dominant per-slot cost even when no scrolling was needed at all.
+- Not a skins problem as the user suspected (confirmed: still slow with the skin off) -
+  this was fixed per-step padding baked into every pick, skin or not.
+
+**FFA mode-select stuck-scroll loop** (`platform/input.py`, `flows/lobby.py`):
+- `InputController._allowed()` called `gate.refocus()` on a focus-blocked action but
+  discarded the result and dropped the action anyway - even when the refocus (Alt-tap
+  + `AttachThreadInput` fallback, `platform/window.py: Win32Windows.focus()`) succeeded
+  within its own poll. A successful refocus now sends the action in the same call
+  instead of making the caller wait a full extra retry cycle.
+- `ModeSelectSearch.tick()` (`flows/lobby.py`) called `scroll_mode_list()`/`click_ffa()`
+  and ignored the return value, so a focus-blocked scroll consumed the same finite
+  12-attempt budget as a real one - a run of bad focus luck burned the whole budget doing
+  nothing, then MODE_SELECT went quiet for up to a minute waiting on the state timeout.
+  Both actions now return `bool`; a block retries on a short cooldown instead of
+  spending part of the real budget.
+
+**Post-loadout flourish** (`behaviors/humanize.py`, `core/tick.py`): user asked for some
+randomized screen movement/fire/jump right after picking weapons so the handoff doesn't
+look like a bot going still - explicitly asked to keep this one simple rather than a
+full humanization engine. `post_loadout_flourish()`: 2-4 small randomized look nudges,
+then a ~50% chance of a brief fire and a ~35% chance of a jump, built from the existing
+`Humanizer` primitives and the existing (already focus/e-stop/observe-only-safe) input
+methods - no new input primitives. Gated by `automation.post_loadout_flourish` (default
+on).
+
+**Pause/resume false-stuck bug** (`core/state_machine.py`), found from a live user report
+mid-round: `resume()` refreshed `_entered_at` (via `_go()`) but not `_last_seen`, the
+clock behind the global "nothing recognized in `unknown_after` seconds -> stuck" safety
+net. `tick()` is a full no-op while paused, so `_last_seen` never advances either, but
+real time keeps passing - pausing for longer than `unknown_after` (45s default) made the
+very next tick after resuming see the gap and treat it as instant proof the screen was
+stuck, escalating (escape -> soft-reset -> relaunch) over nothing. `resume()` now
+refreshes `_last_seen` too. Matches the user's "paused it, came back, it clicked leave
+and left" report; a disconnect-modal detector false-positive on the FFA map-vote screen
+(visible in a saved `unknown/` screenshot - a "Gamemode: Free For All" map picker with no
+detector of its own) is suspected as a possible compounding factor but unconfirmed -
+flagged in Known Issues below.
+
+**Process notes:**
+- This round's project folder was disconnected from the Cowork session partway through;
+  the fixes were built and fully tested against a sandbox copy and handed over as a zip
+  once the user reconnected the folder (now at `Roblox/Warden` instead of the previous
+  `Roblox/Astral macro`).
+- Briefly wrote a new `post_loadout_flourish` key into the user's *live* `config.yaml`
+  before the matching code had actually landed there - the still-old Warden correctly
+  refused to start, reporting it as an unrecognized setting. Reverted immediately once
+  reported. Lesson: don't write a new config key into a live config until the code that
+  understands it is actually in place, even when the schema change is already written
+  and tested elsewhere.
+- Secondary (`Handgun`) and melee (`Fists`) aren't bugged - this user's install has
+  simply never had them picked once yet (`templates/weapons/` only has `primary/
+  Grenade_Launcher.png` and `utility/Grenade.png`). `SequentialLoadoutTransaction`'s
+  "zero setup" design (`learn_missing=True`) waits indefinitely on an unlearned slot
+  for the player's own click rather than failing - correct behavior, but easy to mistake
+  for a hang if you don't know to look for the `calibration.missing` log lines that
+  explain it.
+
+Full suite: same 40 pre-existing failures as every round (a real Windows/macOS API or a
+real X display is needed, this dev sandbox has neither), zero new ones; 10 new tests
+added across `test_input.py`, `test_flows_lobby.py`, `test_humanize.py`, and
+`test_stuck_loop_regressions.py`, all passing. Verified identically in both the sandbox
+copy and this real project folder after delivery.
+
+## Map-vote detector + further loadout speed, round 3 (2026-10-03)
+
+User reviewed a recorded clip from the round above: the stuck-scroll loop fix held up
+("the looping works, everything is good except for those") and mouse movement reads as
+smooth/human. Three things remained: FFA still "needed help" choosing/starting at launch,
+"trying to join" instead clicked leave and needed a manual join again, and weapon
+selection was "a little bit slow" beyond the round-2 fix. Explicit instruction: fix only
+these three, get it to a shippable "first prototype" state, before anything else
+(including the licensing/distribution write-up requested separately).
+
+**FFA map-vote screen - the actual root cause of both "needed help" reports**
+(`flows/calibration.py`, `config/schema.py`, `config/default.yaml`, `core/state_machine.py`,
+`core/tick.py`, `tools/replay.py`): a saved `unknown/` screenshot from the user's session
+showed RIVALS drops onto a map-vote screen (countdown timer + a row of map tiles, one
+always labeled "Random") right after picking FFA - a screen Warden had no detector for at
+all. With nothing recognized, it just sat there until the `mode_select` timeout gave up
+and soft-reset (escape back to the lobby), which is exactly what the user described as
+"it clicked leave and left" and "needed help to click join again." The first "needed help
+choosing FFA" report is suspected to be the same mechanism one layer up (a long enough
+stall anywhere in mode-select reads the same way from the user's seat), though this part
+is circumstantial rather than directly confirmed in the logs.
+
+Fix: new `map_vote` detector (template match against the "Random" tile's shuffle-arrow
+icon, cropped and verified from the user's own captured frame - scored 0.9999 against
+`match_template()` before being committed), wired through the full stack the same way
+`ffa_tile` is - `DETECTOR_NAMES`, `Signals.map_vote`, `GameActions.click_map_vote()`,
+a new `_handle_mode_select()` branch that clicks "Random" and treats the screen as
+recognized (so it can never itself cause an `unknown_after` stuck-escalation or hit the
+`mode_select` soft-reset timeout), the calibration page's guide list, and replay-tool
+signal playback. Caveat, stated plainly: this is seeded from one real frame and has not
+been verified against a live game session in this environment (no real Roblox access in
+this sandbox) - if it stops matching after a resolution change or RIVALS UI update,
+recalibrate it from the Calibration page the same way any other detector gets fixed.
+
+**Further loadout speed** (`flows/loadout.py`, `config/schema.py`): primary now picks
+almost instantly after round 2's "peek" stage, but the user's own fresh log showed
+secondary/melee/utility each still taking a consistent ~2.7s between clicks - more than
+`ui_settle_s` alone explains. Added per-slot diagnostic logging (pick duration, verify-check
+count, scroll count) to `SequentialLoadoutTransaction` so the next real session's log says
+definitively whether this is verify-retry cycling or game-side animation/network latency,
+and took one more incremental `ui_settle_s` trim (0.35s -> 0.25s) as a safe next step while
+that diagnosis is pending - not claiming this alone fully closes the gap the user flagged.
+
+Full suite: same 40 pre-existing environment-only failures as every prior round, zero new
+ones; 4 new tests added to `test_stuck_loop_regressions.py` covering the map-vote click,
+its cooldown, that it can't cause a false stuck-escalation, and that the cooldown resets
+on each fresh mode-select entry - all passing (69/69 across the touched files). Live
+`config.yaml`'s `detectors.map_vote` block was added only after this was confirmed, to
+avoid repeating the earlier "unknown setting" startup-crash mistake.
+
+**Known caveat carried forward:** the map-vote fix is the best explanation the evidence
+supports, not a live-confirmed one - flag this to the user explicitly and ask for one more
+recorded session to confirm before calling FFA fully done.
+
 ## ALL PHASES COMPLETE (0 through 9)
 
 What's left, for the user:
@@ -500,6 +635,11 @@ since you may want to try it earlier.
   rough edges: the window-bounds-includes-title-bar caveat (`platform/window_mac.py`'s
   docstring), and whatever System Settings permission prompts actually look like in
   practice.
+- ~~No detector for RIVALS' FFA map-vote screen~~ fixed in the map-vote detector round
+  (round 3, 2026-10-03) - a `map_vote` detector now clicks "Random" and the screen counts
+  as recognized. **Not yet live-verified** (seeded from one captured frame, no real Roblox
+  access in this dev sandbox) - watch the next real session's log to confirm it actually
+  matches in play, and recalibrate from the Calibration page if it doesn't.
 
 ## Exact next step
 

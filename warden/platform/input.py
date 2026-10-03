@@ -264,8 +264,20 @@ class InputController:
             self._emit("input.observe", f"observe-only: would {what}", "info")
             return None
         if not self.gate.is_focused():
-            self._emit("input.blocked", f"{what} skipped: Roblox is not the foreground window; refocusing", "warn")
-            self.gate.refocus()
+            self._emit("input.blocked", f"{what} needs focus; refocusing", "warn")
+            # gate.refocus() already does the real work (Alt-tap, then an
+            # AttachThreadInput fallback) and polls briefly for it to land -
+            # if it just succeeded, Roblox *is* focused now, so send the
+            # action in this same call instead of dropping it and waiting for
+            # whatever next triggers another attempt. That used to mean every
+            # single focus hiccup cost a full extra retry cycle (a scroll's
+            # own cooldown, a respawn press's own interval, ...) even though
+            # the window was refocused within a few hundred ms - which is
+            # exactly what turned one blip into a multi-second stall.
+            if self.gate.refocus():
+                self._emit("input.refocused", f"refocused; sending {what}", "debug")
+                return True
+            self._emit("input.blocked", f"{what} skipped: Roblox is not the foreground window", "warn")
             return False
         return True
 

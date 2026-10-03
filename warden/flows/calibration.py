@@ -117,7 +117,7 @@ def parse_contract_hours(text: str | None) -> float | None:
 # timing out and relaunching ("keeps rejoining, never opens FFA").
 CRITICAL_DETECTORS = ("lobby_play", "mode_list", "ffa_tile", "health_bar")
 # Needed for respawn / loadout handling but not for simply reaching a match.
-SECONDARY_DETECTORS = ("weapon_picker", "respawn_prompt", "match_end")
+SECONDARY_DETECTORS = ("weapon_picker", "respawn_prompt", "match_end", "map_vote")
 
 
 def template_library(subdir: str | None = None) -> TemplateLibrary:
@@ -197,6 +197,9 @@ SCREEN_GUIDES: tuple[ScreenGuide, ...] = (
                 "something that's always on this menu, like its title", False, ("ffa_tile",)),
     ScreenGuide("ffa_tile", "FFA option", "Same menu as above, with the FFA option visible.",
                 "just the FFA tile / button", True),
+    ScreenGuide("map_vote", "Map vote", "After picking FFA, stay on the map-vote screen "
+                "(countdown timer + map tiles) instead of letting it pass.",
+                "the \"Random\" tile (its shuffle-arrows icon + label)", False),
     ScreenGuide("health_bar", "In a match", "Be in a match (alive) with your HUD showing.",
                 "the green health bar (bottom-left)", True),
     ScreenGuide("weapon_picker", "Weapon picker", "Open the weapon / loadout picker.",
@@ -211,7 +214,7 @@ GUIDES_BY_KEY = {g.key: g for g in SCREEN_GUIDES}
 # The auto-capture walk-through: one capture per step; a step can fill
 # several screens at once (the mode menu shows both mode_list and ffa_tile).
 CAPTURE_STEPS: tuple[tuple[str, ...], ...] = (
-    ("lobby_play",), ("mode_list", "ffa_tile"), ("health_bar",), ("weapon_picker",),
+    ("lobby_play",), ("mode_list", "ffa_tile"), ("map_vote",), ("health_bar",), ("weapon_picker",),
     ("respawn_prompt",), ("match_end",),
 )
 

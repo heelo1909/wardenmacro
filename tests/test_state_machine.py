@@ -41,9 +41,15 @@ class FakeActions(NullActions):
 
     def scroll_mode_list(self):
         self.calls.append("scroll_mode_list")
+        return True
 
     def click_ffa(self):
         self.calls.append("click_ffa")
+        return True
+
+    def click_map_vote(self):
+        self.calls.append("click_map_vote")
+        return True
 
     def click_midgame_join(self):
         self.calls.append("click_midgame_join")

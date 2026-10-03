@@ -133,6 +133,7 @@ DETECTOR_NAMES = (
     "lobby_play",
     "mode_list",
     "ffa_tile",
+    "map_vote",
     "health_bar",
     "respawn_prompt",
     "weapon_picker",
@@ -171,7 +172,7 @@ class Timings(_Model):
     state_save_s: Seconds = 30
     lobby_click_interval_s: Seconds = 4       # re-click Play this often while the mode list hasn't opened
     ffa_click_interval_s: Seconds = 2.5       # re-click the FFA tile this often while it stays on screen
-    ui_settle_s: Seconds = 0.6                # wait after a loadout click before reading the screen again
+    ui_settle_s: Seconds = 0.25               # wait after a loadout click before reading the screen again
     timeouts: StateTimeouts = Field(default_factory=StateTimeouts)
 
 
@@ -328,6 +329,11 @@ class Automation(_Model):
     auto_requeue: bool = True
     abilities: bool = True
     anti_idle: bool = True
+    # A few quick randomized look/fire/jump touches right after a loadout is
+    # picked, so the picker-to-match handoff doesn't look like a bot that
+    # clicked four boxes and then went perfectly still. Deliberately simple -
+    # easy to flip off here if it ever gets in the way of the real automation.
+    post_loadout_flourish: bool = True
 
 
 class GuiConfig(_Model):

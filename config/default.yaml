@@ -158,6 +158,21 @@ detectors:
     template: { path: templates/ffa_tile.png, threshold: 0.85, scale_min: 0.85, scale_max: 1.15, scale_steps: 7, ref_height: 1440 }
     confirm_frames: 1
     params: { calibrated: 1 }
+  map_vote:
+    # After picking a mode, RIVALS shows a map-vote screen (countdown timer +
+    # a grid of map tiles, "Random" always one of them) with no detector of
+    # its own until now - Warden just sat there doing nothing until the
+    # mode_select timeout gave up and soft-reset, which looked like it had
+    # quit/needed help. Clicking "Random" resolves it regardless of which
+    # other maps are offered that round, since it doesn't require knowing
+    # the other (rotating) map names. Seeded from one real captured frame
+    # (2026-10-03) - recalibrate via the Calibration page if it ever stops
+    # matching (different map-vote layout, different resolution, etc).
+    method: template
+    roi: [0.20, 0.20, 0.75, 0.80]
+    template: { path: templates/map_vote_random.png, threshold: 0.80, scale_min: 0.85, scale_max: 1.15, scale_steps: 7, ref_height: 1440 }
+    confirm_frames: 1
+    params: { calibrated: 1 }
   health_bar:
     # Calibrated 2026-10-02 from a real RIVALS frame (2560x1440): the lime-green
     # bar bottom-left. Fractions, so it carries over to other resolutions.

@@ -262,18 +262,35 @@ class SequentialLoadoutTransaction:
             self._order.append(slot)
         self.target = {s: target[s] for s in self._order}
         self._index = 0
-        self._stage = "top"
+        self._stage = "peek"
         self._scrolls = 0
         self._settle_until = 0.0
         self._verify_tries = 0
         self._snapshot: np.ndarray | None = None
         self._clicked_at: tuple[float, float] | None = None
+        self._slot_started_at = self.clock()
         self.result = LoadoutResult()
         self.done = len(self._order) == 0
 
     @property
     def current_slot(self) -> str | None:
         return self._order[self._index] if self._index < len(self._order) else None
+
+    def _try_click_match(self, frame: np.ndarray, template: np.ndarray, slot: str, weapon: str) -> bool:
+        """One match attempt against the current frame; clicks and arms the
+        verify stage on a hit. Shared by "peek" (no scroll yet) and "search"
+        (mid-scroll) - same match, same click, same follow-up."""
+        match = match_template(frame, template, self.ui.list_roi.as_list(),
+                               scale_min=0.85, scale_max=1.15, scale_steps=7)
+        if match is None or match.score < self.ui.verify_threshold:
+            return False
+        self._snapshot = self._list_crop(frame)
+        self._clicked_at = match.center
+        self.actions.click_frac(*match.center, what=f"{slot} weapon ({weapon})")
+        self._wait()
+        self._stage = "verify"
+        self._verify_tries = 0
+        return True
 
     def _list_center(self) -> tuple[float, float]:
         r = self.ui.list_roi
@@ -308,6 +325,19 @@ class SequentialLoadoutTransaction:
 
         if self._stage == "learn":
             self._stage = "top"  # template appeared (learned elsewhere) - carry on
+        if self._stage == "peek":
+            # The weapon is very often already on screen without any scrolling
+            # at all - a favourite primary sitting near the top, or a list
+            # that remembered its position from last time. One free look here
+            # skips the mandatory scroll-to-top reset (and its settle wait)
+            # entirely in that common case, instead of paying for it on every
+            # single slot regardless. Falls straight through to the normal
+            # top -> search scan if nothing's visible yet.
+            if self._try_click_match(frame, template, slot, weapon):
+                return False
+            self._stage = "top"
+            return False
+
         if self._stage == "top":
             # Lists keep their scroll position; start each search from the top.
             self.actions.scroll(abs(self.ui.scroll_notches) * max(self.ui.max_search_scrolls, 1),
@@ -318,15 +348,7 @@ class SequentialLoadoutTransaction:
             return False
 
         if self._stage == "search":
-            match = match_template(frame, template, self.ui.list_roi.as_list(),
-                                   scale_min=0.85, scale_max=1.15, scale_steps=7)
-            if match is not None and match.score >= self.ui.verify_threshold:
-                self._snapshot = self._list_crop(frame)
-                self._clicked_at = match.center
-                self.actions.click_frac(*match.center, what=f"{slot} weapon ({weapon})")
-                self._wait()
-                self._stage = "verify"
-                self._verify_tries = 0
+            if self._try_click_match(frame, template, slot, weapon):
                 return False
             if self._scrolls >= self.ui.max_search_scrolls:
                 self._fail(slot, weapon, "weapon not found in the list", scrolls=self._scrolls)
@@ -350,10 +372,14 @@ class SequentialLoadoutTransaction:
                                  abs(again.center[1] - self._clicked_at[1])) > 0.01)
                 changed = again is None or again.score < self.ui.verify_threshold or moved
             if changed:
+                log.debug("loadout: %s -> '%s' picked in %.2fs (%d verify check(s), %d scroll(s))",
+                         slot, weapon, self.clock() - self._slot_started_at, self._verify_tries + 1,
+                         self._scrolls)
                 self.result.slots[slot] = SlotOutcome(slot, weapon, True, True, self._scrolls)
                 self._index += 1
                 self._stage = "top"
                 self._snapshot = None
+                self._slot_started_at = self.clock()
                 if self._index >= len(self._order):
                     self.done = True
                 return self.done

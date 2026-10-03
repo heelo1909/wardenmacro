@@ -117,6 +117,74 @@ def test_ffa_tile_is_reclicked_if_the_first_click_was_lost():
     assert actions.calls.count("click_ffa") == 3
 
 
+def test_a_long_pause_does_not_trigger_a_false_stuck_detection_on_resume():
+    """2026-10-03 user report: paused Warden mid-match, resumed ~46s later
+    (longer than unknown_after) and it immediately treated the screen as
+    stuck - escaping, soft-resetting, eventually relaunching - even though
+    nothing was wrong; it had just been sitting there paused. tick() is a
+    no-op for the whole pause (see tick()), so the "nothing recognized"
+    clock (_last_seen) never advances either, but real time keeps passing;
+    _entered_at already gets refreshed by _go() on resume, _last_seen didn't."""
+    timeouts = StateTimeouts(unknown_after=45)
+    actions = StuckActions()
+    clock = ManualClock(0.0)
+    m = StateMachine(actions, timeouts=timeouts, clock=clock)
+    m.state, m._entered_at = State.IN_MATCH, 0.0
+    m._last_seen = 0.0
+    m.tick(Signals(health_bar=True))   # confirmed healthy right before pausing
+    clock.advance(1.0)
+    m.pause()
+    clock.advance(46.0)                # longer than unknown_after, entirely while paused
+    m.resume()
+    clock.advance(0.25)
+    m.tick(Signals(health_bar=False))  # one frame with nothing recognized right after resume
+    assert m.state is State.IN_MATCH   # must not jump to UNKNOWN/RECOVERING over paused time
+
+
+def test_map_vote_screen_gets_clicked_instead_of_sitting_idle():
+    """2026-10-03 user report: after picking FFA, 'it needed help' / 'it just
+    clicked the leave button' - the real gap was RIVALS' map-vote screen
+    (countdown + map tiles) having no detector at all, so Warden sat doing
+    nothing until the mode_select timeout gave up and soft-reset (escape back
+    to the lobby), which looked like it had quit."""
+    m, actions, clock = make(State.MODE_SELECT)
+    clock.advance(0.25)
+    m.tick(Signals(map_vote=True))
+    assert "click_map_vote" in actions.calls
+    assert m.state is State.MODE_SELECT  # stays put - the click resolves the screen itself
+
+
+def test_map_vote_click_has_a_cooldown_not_spammed_every_tick():
+    m, actions, clock = make(State.MODE_SELECT)
+    for _ in range(5):
+        clock.advance(0.25)
+        m.tick(Signals(map_vote=True))
+    assert actions.calls.count("click_map_vote") == 1  # well under ffa_click_interval (2.5s default)
+
+
+def test_map_vote_does_not_trigger_a_false_stuck_escalation():
+    """map_vote must count as 'something recognized' (like ffa_tile/mode_list
+    do) so sitting on this screen for a while never looks like an unknown,
+    stuck screen on its own. FAST_TIMEOUTS' mode_select=2s and unknown_after=2s
+    both actively "try" to fire well before the 10s this loop runs for -
+    neither should win while map_vote stays visible."""
+    m, actions, clock = make(State.MODE_SELECT)
+    for _ in range(40):
+        clock.advance(0.25)
+        m.tick(Signals(map_vote=True))
+    assert m.state is State.MODE_SELECT
+
+
+def test_map_vote_cooldown_resets_on_a_fresh_mode_select_entry():
+    m, actions, clock = make(State.LOBBY)
+    clock.advance(0.25)
+    m.tick(Signals(mode_list=True))
+    assert m.state is State.MODE_SELECT
+    clock.advance(0.25)
+    m.tick(Signals(map_vote=True))
+    assert actions.calls.count("click_map_vote") == 1
+
+
 def test_ffa_tile_visible_in_lobby_skips_straight_to_mode_select():
     m, actions, clock = make(State.LOBBY)
     clock.advance(0.25)

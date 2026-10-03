@@ -5,16 +5,17 @@ from warden.platform.input import CornerWatch, InputController, InputError, norm
 
 
 class FakeGate:
-    def __init__(self, focused=True):
+    def __init__(self, focused=True, refocus_result=True):
         self.focused = focused
         self.refocus_calls = 0
+        self.refocus_result = refocus_result
 
     def is_focused(self):
         return self.focused
 
     def refocus(self):
         self.refocus_calls += 1
-        return True
+        return self.refocus_result
 
 
 class RecordingMethod:
@@ -46,8 +47,8 @@ class RecordingMethod:
         self._maybe_fail("wheel", notches)
 
 
-def make_controller(methods, focused=True, observe_only=False):
-    gate = FakeGate(focused)
+def make_controller(methods, focused=True, observe_only=False, refocus_result=True):
+    gate = FakeGate(focused, refocus_result=refocus_result)
     return InputController(
         methods=methods, gate=gate,
         rect=lambda: Rect(0, 0, 1000, 1000),
@@ -56,13 +57,27 @@ def make_controller(methods, focused=True, observe_only=False):
     ), gate
 
 
-def test_click_blocked_when_not_focused_and_triggers_refocus():
+def test_click_blocked_when_not_focused_and_refocus_fails():
     primary = RecordingMethod("sendinput")
-    ctl, gate = make_controller([primary], focused=False)
+    ctl, gate = make_controller([primary], focused=False, refocus_result=False)
     ok = ctl.click_frac(0.5, 0.5)
     assert not ok
     assert gate.refocus_calls == 1
     assert primary.calls == []
+
+
+def test_click_proceeds_in_the_same_call_after_a_successful_refocus():
+    """2026-10-03 user report: a focus hiccup (e.g. mid weapon-pick) used to
+    drop the action and make the caller wait for its own next retry cycle -
+    even though the game was refocused within gate.refocus()'s own poll. Now
+    a successful refocus sends the action right away instead of wasting a
+    whole extra cycle."""
+    primary = RecordingMethod("sendinput")
+    ctl, gate = make_controller([primary], focused=False, refocus_result=True)
+    ok = ctl.click_frac(0.5, 0.5)
+    assert ok
+    assert gate.refocus_calls == 1
+    assert primary.calls != []
 
 
 def test_click_sends_jiggle_then_button_down_up():

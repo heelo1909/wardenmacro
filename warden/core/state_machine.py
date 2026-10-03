@@ -70,6 +70,7 @@ class Signals:
     lobby_play: bool = False
     mode_list: bool = False
     ffa_tile: bool = False
+    map_vote: bool = False
     health_bar: bool = False
     respawn_prompt: bool = False
     weapon_picker: bool = False
@@ -109,6 +110,7 @@ class GameActions(Protocol):
     def click_play(self) -> None: ...
     def scroll_mode_list(self) -> None: ...
     def click_ffa(self) -> None: ...
+    def click_map_vote(self) -> None: ...
     def click_midgame_join(self) -> None: ...
     def click_match_continue(self) -> None: ...
     def press_respawn(self) -> None: ...
@@ -130,8 +132,9 @@ class NullActions:
 
     def launch(self) -> None: pass
     def click_play(self) -> None: pass
-    def scroll_mode_list(self) -> None: pass
-    def click_ffa(self) -> None: pass
+    def scroll_mode_list(self) -> bool: return False
+    def click_ffa(self) -> bool: return False
+    def click_map_vote(self) -> bool: return False
     def click_midgame_join(self) -> None: pass
     def click_match_continue(self) -> None: pass
     def press_respawn(self) -> None: pass
@@ -258,6 +261,8 @@ class StateMachine:
         self._respawn = RespawnFlow(actions, clock)
         self._mode_select = ModeSelectSearch(actions, clock, max_attempts=mode_select_scroll_attempts,
                                              click_interval_s=ffa_click_interval)
+        self._last_map_vote_click: float | None = None
+        self._map_vote_click_interval = ffa_click_interval
         self._last_seen: float = clock()
         self._match_end_click_at: float = 0.0
 
@@ -278,6 +283,7 @@ class StateMachine:
         self._entered_at = now
         if new_state is State.MODE_SELECT:
             self._mode_select.reset()
+            self._last_map_vote_click = None
         if new_state is State.DEAD:
             self._respawn.reset()
             self.counters.respawns += 1
@@ -327,7 +333,18 @@ class StateMachine:
 
     def resume(self) -> None:
         if self.state is State.PAUSED:
-            self._go(self._pre_pause, "user resume", self.clock())
+            now = self.clock()
+            # tick() no-ops the whole time we're paused (see tick()), so the
+            # "nothing recognized" clock never advances either - but real
+            # wall-clock time keeps passing. Without this, pausing for longer
+            # than timeouts.unknown_after (default 45s) means the very next
+            # tick after resuming sees now - _last_seen already over the
+            # limit and immediately declares the (perfectly fine) screen
+            # "stuck", escalating into a soft-reset/relaunch for no reason.
+            # _entered_at already gets this treatment via _go(); _last_seen
+            # is the one clock _go() doesn't touch, so it needs it here.
+            self._last_seen = now
+            self._go(self._pre_pause, "user resume", now)
 
     def stop(self) -> None:
         self._go(State.STOPPED, "user stop", self.clock())
@@ -442,8 +459,9 @@ class StateMachine:
             return True
 
         # Any primary signal resets the "nothing detected" clock.
-        primary = (s.lobby_play or s.mode_list or s.ffa_tile or s.health_bar or s.respawn_prompt
-                   or s.weapon_picker or s.switch_weapons or s.midgame_join or s.match_end)
+        primary = (s.lobby_play or s.mode_list or s.ffa_tile or s.map_vote or s.health_bar
+                   or s.respawn_prompt or s.weapon_picker or s.switch_weapons or s.midgame_join
+                   or s.match_end)
         if primary:
             self._last_seen = now
         elif self.state not in _UNKNOWN_EXEMPT and now - self._last_seen >= self.timeouts.unknown_after:
@@ -518,6 +536,19 @@ class StateMachine:
             return
         if s.health_bar:
             self._go(State.IN_MATCH, "health bar appeared (early abort)", now)
+            return
+        if s.map_vote:
+            # After FFA is picked, RIVALS shows a map-vote screen (countdown
+            # timer + map tiles) that needs its own click before the match
+            # actually starts. Without this, nothing happened here at all -
+            # Warden just sat idle until the mode_select timeout gave up and
+            # soft-reset (escape back to the lobby), which looked like it had
+            # quit and needed a hand to get back in. Clicks "Random" (always
+            # one of the options, unlike the other rotating map names).
+            if (self._last_map_vote_click is None
+                    or now - self._last_map_vote_click >= self._map_vote_click_interval):
+                self.actions.click_map_vote()
+                self._last_map_vote_click = now
             return
         if self._since_entry(now) >= self.timeouts.mode_select:
             what = ("clicked FFA but the match never started (no health_bar / weapon_picker)"

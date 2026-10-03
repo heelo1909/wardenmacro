@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import random
+import time
+from collections.abc import Callable
+from typing import Protocol
 
 
 class Humanizer:
@@ -40,3 +43,33 @@ class Humanizer:
         if max_px <= 0:
             return 0
         return int(round(self.between(-max_px, max_px)))
+
+
+class FlourishInput(Protocol):
+    def look(self, dx: int, dy: int, steps: int = 6) -> bool: ...
+    def fire(self, hold_s: float, button: str = "left") -> bool: ...
+    def key_tap(self, key: str, hold_s: float | None = None) -> bool: ...
+
+
+def post_loadout_flourish(
+    input_ctl: FlourishInput,
+    humanizer: Humanizer,
+    jump_key: str,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """A handful of quick, randomized look/fire/jump touches for right after a
+    loadout is picked - so the handoff into the match isn't four clean clicks
+    followed by dead stillness. Deliberately small and simple (a few camera
+    nudges, maybe a shot, maybe a jump): this is cosmetic, not a
+    humanization engine, and every action already goes through the normal
+    input gate (focus/emergency-stop/observe-only all still apply), so this
+    can't do anything the rest of Warden couldn't already do. Bounded to well
+    under a second so it can't become a new source of slowness itself.
+    """
+    for _ in range(round(humanizer.between(2, 4))):
+        input_ctl.look(humanizer.offset_px(140), humanizer.offset_px(70))
+        sleep(humanizer.between(0.04, 0.12))
+    if humanizer.chance(0.5):
+        input_ctl.fire(humanizer.hold_seconds((60, 150)))
+    if humanizer.chance(0.35):
+        input_ctl.key_tap(jump_key)
