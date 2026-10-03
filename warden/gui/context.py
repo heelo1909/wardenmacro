@@ -82,6 +82,17 @@ class AppContext:
 
         return load_state(paths.data_home() / "state.json")
 
+    def session_summaries(self) -> list[dict]:
+        """Every past session Warden has finished (section 9's ``sessions/*.json``),
+        oldest first. Used by Home's chart and the History page's past-sessions
+        table; cheap enough (a handful of small JSON files) to call on every
+        refresh without caching.
+        """
+        from warden import paths
+        from warden.core.persistence import load_session_summaries
+
+        return load_session_summaries(paths.data_dir("sessions"))
+
     def contract_banked_hours(self, preset_id: str | None = None) -> float:
         """Cumulative hours already credited to a contract from past sessions."""
         entry = self.persisted_state().contracts.get(preset_id or self.preset_id)

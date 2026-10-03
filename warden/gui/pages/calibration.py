@@ -82,6 +82,16 @@ class CalibrationPage(QWidget):
         layout.addWidget(tabs, 1)
         self._refresh_checklist()
 
+    def apply_scale(self, scale: float) -> None:
+        """Called by MainWindow when the window size changes the UI scale -
+        without this the two big preview canvases stayed fixed at 300px tall
+        and just forced a scrollbar on a small window instead of shrinking
+        like the rest of the app does.
+        """
+        height = max(160, int(300 * scale))
+        self.canvas.setMinimumHeight(height)
+        self.weapon_canvas.setMinimumHeight(height)
+
     # -- setup checklist + auto-capture -------------------------------------------------------
 
     def _build_checklist(self) -> QWidget:

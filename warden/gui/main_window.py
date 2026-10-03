@@ -134,7 +134,7 @@ class MainWindow(QMainWindow):
             side.addWidget(button)
             self.stack.addWidget(_scrollable(pages[name]))
         self.pages = pages
-        self.nav.idClicked.connect(self.stack.setCurrentIndex)
+        self.nav.idClicked.connect(self._on_nav_clicked)
         self.nav.button(0).setChecked(True)
         side.addStretch(1)
 
@@ -210,6 +210,12 @@ class MainWindow(QMainWindow):
         if self.ctx and self.ctx.tick_loop:
             self.ctx.tick_loop.stop()
         super().closeEvent(event)
+
+    def _on_nav_clicked(self, index: int) -> None:
+        self.stack.setCurrentIndex(index)
+        history = self.pages.get("History") if hasattr(self, "pages") else None
+        if PAGES[index] == "History" and hasattr(history, "refresh_sessions"):
+            history.refresh_sessions()
 
     # -- session control (also reachable via hotkeys) -------------------------------------------------------
 
@@ -287,6 +293,15 @@ class MainWindow(QMainWindow):
         if self.home_page is not None and hasattr(self.home_page, "reset_controls"):
             self.home_page.reset_controls()
 
+    def _refresh_history_views(self) -> None:
+        """A session just ended, which wrote a new sessions/*.json (HANDOFF
+        section 9) - refresh every page that charts/lists past sessions."""
+        if self.home_page is not None:
+            self.home_page.refresh_history()
+        history = getattr(self, "pages", {}).get("History")
+        if history is not None and hasattr(history, "refresh_sessions"):
+            history.refresh_sessions()
+
     def _toggle_pause(self) -> None:
         if self.ctx is None or self.ctx.tick_loop is None:
             return
@@ -319,6 +334,8 @@ class MainWindow(QMainWindow):
             self.mini_overlay.hide()
         self.showNormal()
         self.statusBar().showMessage("Stopped")
+        self._reset_home_buttons()  # a hotkey/scheduled stop never went through HomePage's own Stop button
+        self._refresh_history_views()
         dialog = SummaryDialog(duration, in_match, counters, list(self._incidents), parent=self)
         dialog.exec()
 
@@ -366,6 +383,7 @@ class MainWindow(QMainWindow):
             self.home_page._refresh_loadout_card()
             self.home_page._refresh_contract_label()
             self.home_page._refresh_resume_banner()
+        self._refresh_history_views()  # the preset that just ended wrote a new sessions/*.json
         self._start(ask=False)  # unattended queue advance: never block on a dialog
 
 

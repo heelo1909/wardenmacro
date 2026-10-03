@@ -30,24 +30,28 @@ def run() -> int:
         print(f"  monitor {i}{tag}: {mon.rect.width}x{mon.rect.height} @ {int(mon.scale * 100)}%")
 
     _section("Roblox window")
-    if sys.platform != "win32":
-        print("not on Windows - window detection unavailable")
-        window = None
-        backend = None
+    window = None
+    backend = None
+    if sys.platform not in ("win32", "darwin"):
+        print(f"not supported on {sys.platform} - window detection needs Windows or macOS")
     else:
-        from warden.platform.window import Win32Windows, pick_client, pick_updater
+        from warden.platform.window import make_window_backend, pick_client, pick_updater
 
-        backend = Win32Windows()
-        windows = backend.list_windows()
-        window = pick_client(windows)
-        updater = pick_updater(windows)
-        if window:
-            print(f"found: hwnd={window.hwnd} class={window.class_name!r} "
-                  f"client={window.client.width}x{window.client.height} minimized={window.minimized}")
-        else:
-            print("not found (is RobloxPlayerBeta.exe running with a visible window?)")
-        if updater:
-            print(f"NOTE: Roblox updater window is open: {updater.title!r}")
+        try:
+            backend = make_window_backend()
+        except OSError as exc:
+            print(f"window backend unavailable: {exc}")
+        if backend is not None:
+            windows = backend.list_windows()
+            window = pick_client(windows)
+            updater = pick_updater(windows)
+            if window:
+                print(f"found: id={window.hwnd} class={window.class_name!r} "
+                      f"client={window.client.width}x{window.client.height} minimized={window.minimized}")
+            else:
+                print("not found (is the Roblox client running with a visible window?)")
+            if updater:
+                print(f"NOTE: Roblox updater window is open: {updater.title!r}")
 
     _section("Focus test")
     if window and backend:
@@ -71,6 +75,13 @@ def run() -> int:
 
     _section("OCR")
     print(f"tesseract available: {ocr.available()}")
+
+    if sys.platform == "darwin":
+        _section("macOS permissions")
+        print("Capture needs 'Screen Recording' and clicks/keys need 'Accessibility' - System Settings "
+              "-> Privacy & Security. If the window above wasn't found, or capture/input silently does "
+              "nothing, this is the first thing to check (grant access to Terminal, or to Warden.app "
+              "if running the packaged build).")
 
     _section("Config")
     try:

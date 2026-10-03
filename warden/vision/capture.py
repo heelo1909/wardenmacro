@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from typing import Protocol
@@ -102,8 +103,6 @@ class WindowCapturer:
         return self._api
 
     def _print_window(self, hwnd: int, width: int, height: int) -> np.ndarray | None:
-        import sys
-
         if sys.platform != "win32" or not hwnd or width <= 0 or height <= 0:
             return None
         ctypes, user32, gdi32, BIH = self._win32()
@@ -146,10 +145,39 @@ class WindowCapturer:
                 gdi32.DeleteDC(mem)
             user32.ReleaseDC(hwnd, hdc)
 
+    def _quartz_capture(self, hwnd: int, width: int, height: int) -> np.ndarray | None:
+        """macOS equivalent of ``_print_window``: ``CGWindowListCreateImage``
+        rasterizes a window by its id regardless of what's on top of it or
+        whether it's covered - same "capture by handle, not by screen region"
+        trick as PrintWindow, needed for the exact same reason (Warden's own
+        window, or anything else, sitting on top of Roblox). Requires the
+        macOS "Screen Recording" permission; with it missing this (quietly,
+        like everything else here) returns None and ``grab()`` falls back to
+        a plain screen capture instead of raising.
+        """
+        if sys.platform != "darwin" or not hwnd or width <= 0 or height <= 0:
+            return None
+        try:
+            import Quartz
+        except ImportError:
+            return None
+        image = Quartz.CGWindowListCreateImage(
+            Quartz.CGRectNull,  # ignored: a specific window id is given below instead of a screen region
+            Quartz.kCGWindowListOptionIncludingWindow,
+            hwnd,
+            Quartz.kCGWindowImageBoundsIgnoreFraming | Quartz.kCGWindowImageBestResolution,
+        )
+        if image is None:
+            return None
+        return _cgimage_to_bgr(Quartz, image, width, height)
+
     def grab(self, rect: Rect) -> np.ndarray:
         frame = None
         try:
-            frame = self._print_window(self.hwnd, rect.width, rect.height)
+            if sys.platform == "win32":
+                frame = self._print_window(self.hwnd, rect.width, rect.height)
+            elif sys.platform == "darwin":
+                frame = self._quartz_capture(self.hwnd, rect.width, rect.height)
         except Exception:
             frame = None
         if frame is not None:
@@ -159,13 +187,45 @@ class WindowCapturer:
         return self.fallback.grab(rect)
 
 
+def _cgimage_to_bgr(quartz, image, want_w: int, want_h: int) -> np.ndarray | None:
+    """A CGImageRef's raw pixels as a BGR ``np.ndarray`` cropped/resized to
+    ``(want_w, want_h)``. Split out from ``_quartz_capture`` so the byte-layout
+    logic can be exercised by tests with a fake image object, without pyobjc
+    installed (see tests/test_capture.py's FakeCGImage).
+    """
+    px_w, px_h = int(quartz.CGImageGetWidth(image)), int(quartz.CGImageGetHeight(image))
+    if px_w <= 0 or px_h <= 0:
+        return None
+    provider = quartz.CGImageGetDataProvider(image)
+    buf = bytes(quartz.CGDataProviderCopyData(provider))
+    bytes_per_row = int(quartz.CGImageGetBytesPerRow(image))
+    if bytes_per_row < px_w * 4 or len(buf) < bytes_per_row * px_h:
+        return None
+    arr = np.frombuffer(buf, dtype=np.uint8, count=bytes_per_row * px_h).reshape(px_h, bytes_per_row)
+    arr = arr[:, : px_w * 4].reshape(px_h, px_w, 4)
+    # CGWindowListCreateImage is 32-bit-little-endian/alpha-first, i.e. B,G,R,A
+    # in increasing memory address order - the same byte layout this file's
+    # Windows path already assumes (GetDIBits' BGRA), so the same "drop the
+    # last channel" slice applies. If real hardware ever shows swapped red/
+    # blue, flip this to [:, :, [2, 1, 0]] instead.
+    frame = np.ascontiguousarray(arr[:, :, :3])
+    if (px_w, px_h) != (want_w, want_h):
+        # Retina displays return pixels at up to 2x the window's point size.
+        import cv2
+
+        frame = cv2.resize(frame, (want_w, want_h), interpolation=cv2.INTER_AREA)
+    if not frame.any():
+        return None
+    return frame
+
+
 def find_roblox_client():
     """(hwnd, client Rect) of the Roblox client window, or None."""
     from warden.platform import dpi
-    from warden.platform.window import Win32Windows, pick_client
+    from warden.platform.window import make_window_backend, pick_client
 
     dpi.ensure_dpi_awareness()
-    client = pick_client(Win32Windows().list_windows())
+    client = pick_client(make_window_backend().list_windows())
     if client is None or client.client.is_empty():
         return None
     return client.hwnd, client.client
@@ -186,10 +246,10 @@ def grab_roblox_client(focus: bool = False) -> np.ndarray | None:
         return None
     hwnd, rect = found
     if focus:
-        from warden.platform.window import Win32Windows
+        from warden.platform.window import make_window_backend
 
         try:
-            Win32Windows().focus(hwnd)
+            make_window_backend().focus(hwnd)
             time.sleep(0.35)
         except Exception:
             pass

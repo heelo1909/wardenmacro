@@ -13,7 +13,12 @@ ACCENT_PRESSED = "#D68F25"
 SUCCESS = "#3FB97A"
 ERROR = "#E5534B"
 
-FONT_STACK = '"Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", "Inter", sans-serif'
+FONT_STACK = ('"Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", '
+              "-apple-system, BlinkMacSystemFont, "
+              '".AppleSystemUIFont", "Helvetica Neue", '
+              '"Inter", sans-serif')
+
+MONOSPACE_STACK = 'Consolas, Menlo, Monaco, "SF Mono", monospace'
 
 
 def stylesheet(scale: float = 1.0) -> str:
@@ -36,6 +41,13 @@ def stylesheet(scale: float = 1.0) -> str:
     }}
     QMainWindow, QWidget#Root {{
         background: {BG};
+    }}
+    QDialog, QMessageBox {{
+        background: {BG};
+    }}
+    QMessageBox QLabel, QInputDialog QLabel {{
+        color: {TEXT};
+        background: transparent;
     }}
     QScrollArea#PageScroll, QScrollArea#PageScroll > QWidget, QWidget#Page {{
         background: {BG};
@@ -100,15 +112,14 @@ def stylesheet(scale: float = 1.0) -> str:
         font-weight: 600;
         background: {CARD_HOVER};
         color: {TEXT_MUTED};
-        max-width: {_px(110)}px;
     }}
     QLabel#StatusChip[tone="success"] {{
         background: rgba(63, 185, 122, 0.18);
         color: {SUCCESS};
     }}
     QLabel#StatusChip[tone="warn"] {{
-        background: rgba(242, 169, 59, 0.18);
-        color: {ACCENT};
+        background: rgba(229, 83, 75, 0.16);
+        color: {ERROR};
     }}
     QLabel#StatusChip[tone="accent"] {{
         background: rgba(242, 169, 59, 0.18);

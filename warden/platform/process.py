@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
+import sys
 import time
 import webbrowser
 from collections.abc import Callable
 
 from warden.config.schema import LaunchMode, Preset
-from warden.platform.window import CLIENT_PROCESS
+from warden.platform.window import client_process_names
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +48,14 @@ class Launcher:
 
 
 def _startfile(uri: str) -> None:
-    os.startfile(uri)  # type: ignore[attr-defined]  # Windows only
+    if sys.platform == "win32":
+        os.startfile(uri)  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        # `open` hands the URI to whatever app is registered for the roblox://
+        # scheme, same as os.startfile does on Windows.
+        subprocess.run(["open", uri], check=False)
+    else:
+        webbrowser.open(uri)
 
 
 class RobloxProcess:
@@ -60,10 +69,11 @@ class RobloxProcess:
     def pids() -> list[int]:
         import psutil
 
+        names = client_process_names()
         out = []
         for proc in psutil.process_iter(["name"]):
             try:
-                if (proc.info["name"] or "").lower() == CLIENT_PROCESS:
+                if (proc.info["name"] or "").lower() in names:
                     out.append(proc.pid)
             except Exception:
                 continue

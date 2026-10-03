@@ -17,8 +17,10 @@ section 1 for the clean-room rules this project follows.
 
 ## Install
 
-**Requirements:** Windows 10/11, Python 3.12+ (built and tested on 3.12/3.14), a 64-bit
-Python install.
+**Requirements:** Windows 10/11 or macOS 11+, Python 3.12+ (built and tested on
+3.12/3.14), a 64-bit Python install. Everything in this README applies to both —
+the only differences are the shell commands below and where things like logs and
+config end up on disk, covered in **macOS notes** further down.
 
 ```bash
 python -m venv .venv
@@ -27,12 +29,39 @@ pip install -r requirements.txt
 python -m warden
 ```
 
+On macOS, double-click **`Run Warden (Mac).command`** instead — it sets up its own
+`.venv` and installs everything the first time you run it, so there's nothing to type
+in a terminal. (Equivalent manual commands: `python3 -m venv .venv`, `source
+.venv/bin/activate`, `pip install -r requirements.txt`, `python3 -m warden`.)
+
 Or run it as a packaged build (no Python install needed) — see **Packaging** below.
 
-On first run, Warden copies its default settings into
-`%LOCALAPPDATA%\Warden\config.yaml` and `%LOCALAPPDATA%\Warden\presets\*.yaml`. Edit
-those (or use the Settings/Loadout pages) — the files in this repo's `config/` folder
-are only the shipped defaults and are never modified by the running app.
+On first run, Warden copies its default settings into `config.yaml` and
+`presets\*.yaml` under its data folder — `%LOCALAPPDATA%\Warden` on Windows,
+`~/Library/Application Support/Warden` on macOS (every other `%LOCALAPPDATA%\Warden`
+path in this README has a matching folder in that same macOS location). Edit those
+(or use the Settings/Loadout pages) — the files in this repo's `config/` folder are
+only the shipped defaults and are never modified by the running app.
+
+### macOS notes
+
+- **First run:** double-click `Run Warden (Mac).command`. It creates its own
+  `.venv` and installs dependencies the first time, then just launches Warden on
+  every run after that.
+- **Permissions (required):** macOS will not let Warden see or control Roblox until
+  you grant two permissions, in **System Settings → Privacy & Security**:
+  **Screen Recording** (to capture the Roblox window) and **Accessibility** (to send
+  clicks/keys). Grant them to **Terminal** when running from source, or to
+  **Warden.app** if you built the packaged app. Without these, Warden doesn't
+  crash or error — it just silently sees nothing and clicks nothing, so this is the
+  first thing to check if Start doesn't seem to do anything.
+- **Windowed vs. fullscreen Roblox:** macOS reports a window's position/size
+  including its title bar, where Windows reports only the game content area. Warden
+  accounts for most of this automatically, but if clicks land slightly off, playing
+  RIVALS in **fullscreen** removes the title bar entirely and avoids the difference.
+- Everything else — calibration, presets, Discord/LAN integrations, troubleshooting
+  — works identically to Windows; just mentally swap in the macOS data folder path
+  above wherever this README says `%LOCALAPPDATA%\Warden`.
 
 ### Optional: Tesseract OCR
 
@@ -46,10 +75,12 @@ and those specific features just stay off until it's installed.
 
 ### Optional: integrations
 
-Discord webhook/bot, the LAN phone dashboard, and Windows toast notifications are all
-optional and off by default (toasts are on by default). Their packages
-(`requests`, `discord.py`, `fastapi`, `uvicorn`, `winotify`) are in `requirements.txt`'s
-`integrations` extra — install them only if you want those features:
+Discord webhook/bot, the LAN phone dashboard, and desktop toast notifications are all
+optional and off by default (toasts are on by default). Toasts use `winotify` on
+Windows and the built-in `osascript`/Notification Center on macOS (nothing extra to
+install there). The other packages (`requests`, `discord.py`, `fastapi`, `uvicorn`)
+are in `requirements.txt`'s `integrations` extra — install them only if you want
+those features:
 
 ```bash
 pip install -e ".[integrations]"
@@ -71,6 +102,11 @@ That's it. Warden ships with the screens it needs to recognise (Play button, gam
 menu, Free For All, health bar, weapon picker, respawn button) already set up, and
 they scale to your resolution. Calibration is only for fixing something that isn't
 being recognised (e.g. after a big RIVALS UI update).
+
+The Home page tracks a "Recent sessions" chart of in-match minutes per session, and
+the History page keeps a full table of every past session (duration, in-match time,
+incidents) — both read from the same session records Warden has always saved, so
+there's nothing to turn on.
 
 ## First run: Calibration (optional)
 
@@ -210,22 +246,30 @@ pause/resume/stop require it.
 - **Something looks stuck mid-session:** the emergency stop is holding the mouse in
   the screen's top-left 5×5px corner for 0.3s, or the configured stop hotkey
   (default **F8**).
+- **On macOS, nothing seems to happen at all:** this is almost always the Screen
+  Recording / Accessibility permissions — see **macOS notes** under Install. The
+  Diagnostics page's new "macOS permissions" section repeats this reminder whenever
+  it can't find the Roblox window.
 
 ---
 
-## Packaging (build your own .exe)
+## Packaging (build your own .exe / .app)
 
 ```bash
 pip install -e ".[dev]"
 pyinstaller warden.spec --clean
 ```
 
-Produces a one-folder build at `dist\Warden\Warden.exe` — copy the whole `Warden\`
-folder wherever you like; it carries its own `config\` defaults and doesn't need
-Python installed on the target machine. Nothing gameplay-specific is hardcoded
-anywhere in the Python source — every detector range, ROI, keybind, place ID, and
-loadout lives in `config\default.yaml` / `config\presets\*.yaml`, which this build
-step copies in as the shipped defaults (never overwritten on an existing install).
+On Windows this produces a one-folder build at `dist\Warden\Warden.exe` — copy the
+whole `Warden\` folder wherever you like; it carries its own `config\` defaults and
+doesn't need Python installed on the target machine. On macOS, run the same command
+(or double-click `Rebuild Warden.app (Mac).command`) **on a Mac** — PyInstaller
+builds a native app for whichever OS it's running on, so a `.app` can't be built
+from Windows, and the result is `dist/Warden.app` instead. Nothing gameplay-specific
+is hardcoded anywhere in the Python source — every detector range, ROI, keybind,
+place ID, and loadout lives in `config\default.yaml` / `config\presets\*.yaml`,
+which this build step copies in as the shipped defaults (never overwritten on an
+existing install).
 
 ---
 

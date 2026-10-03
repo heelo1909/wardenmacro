@@ -1,11 +1,17 @@
 # PyInstaller spec - one-folder build (HANDOFF §9, Phase 9).
 #
-#   .venv\Scripts\pyinstaller.exe warden.spec --clean
+#   Windows:  .venv\Scripts\pyinstaller.exe warden.spec --clean
+#   macOS:    .venv/bin/pyinstaller warden.spec --clean   (run ON a Mac - PyInstaller
+#             builds a native app for whatever OS it's running on, it can't
+#             cross-compile a .app from Windows/Linux or an .exe from a Mac)
 #
-# Produces dist\Warden\Warden.exe plus its folder of dependencies. config\
-# ships as the *defaults* that get copied into %LOCALAPPDATA%\Warden on
-# first run (warden/config/loader.py's seed_user_config) - the installed
-# copy is never written to.
+# Produces dist/Warden/Warden.exe on Windows, or dist/Warden.app on macOS,
+# each with its own folder of bundled dependencies. config/ ships as the
+# *defaults* copied into the user data folder on first run
+# (warden/config/loader.py's seed_user_config) - the installed copy is never
+# written to.
+import sys
+
 from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
@@ -18,11 +24,16 @@ hidden_imports = [
     *collect_submodules("discord"),
     *collect_submodules("fastapi"),
     *collect_submodules("uvicorn"),
-    "winotify",
-    "pydirectinput",
     "pytesseract",
-    "win32gui", "win32con", "win32process",  # pywin32, used indirectly on Windows
 ]
+if sys.platform == "win32":
+    hidden_imports += [
+        "winotify",
+        "pydirectinput",
+        "win32gui", "win32con", "win32process",  # pywin32, used indirectly on Windows
+    ]
+elif sys.platform == "darwin":
+    hidden_imports += [*collect_submodules("Quartz"), *collect_submodules("AppKit")]
 
 a = Analysis(
     ["scripts/run_warden.py"],
@@ -65,3 +76,18 @@ coll = COLLECT(
     upx_exclude=[],
     name="Warden",
 )
+
+if sys.platform == "darwin":
+    # Wraps the same COLLECT output as a double-clickable Warden.app instead
+    # of a bare folder - macOS users expect an .app, not an exe-style folder.
+    app = BUNDLE(
+        coll,
+        name="Warden.app",
+        icon=None,  # set once a real Lucide/MIT icon is chosen and converted to .icns
+        bundle_identifier="com.warden.rivals",
+        info_plist={
+            "NSHighResolutionCapable": True,
+            "LSMinimumSystemVersion": "11.0",
+            "CFBundleShortVersionString": "0.1.0",
+        },
+    )

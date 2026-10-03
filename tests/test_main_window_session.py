@@ -54,3 +54,31 @@ def test_stop_shows_summary_dialog_with_live_counters(window, monkeypatch):
 
 def test_stop_without_a_running_session_is_a_no_op(window):
     window._stop()  # must not raise even though nothing was started
+
+
+def test_refresh_history_views_updates_home_and_history_pages(window, warden_home):
+    from warden.core.persistence import SessionSummary, save_session_summary
+
+    save_session_summary(warden_home / "sessions", SessionSummary(
+        preset_id="glass_wrap", label="Glass Wrap", started_at=0.0, ended_at=1_700_000_000.0,
+        duration_s=600.0, in_match_s=600.0, counters={}, incidents=[],
+    ))
+    assert window.home_page.history_chart._values == []
+    window._refresh_history_views()
+    assert window.home_page.history_chart._values == [10.0]
+    assert window.pages["History"].sessions_table.rowCount() == 1
+
+
+def test_clicking_history_nav_refreshes_its_sessions_table(window, warden_home):
+    from warden.core.persistence import SessionSummary, save_session_summary
+    from warden.gui.main_window import PAGES
+
+    history_index = PAGES.index("History")
+    assert window.pages["History"].sessions_table.rowCount() == 0
+    save_session_summary(warden_home / "sessions", SessionSummary(
+        preset_id="glass_wrap", label="Glass Wrap", started_at=0.0, ended_at=1_700_000_000.0,
+        duration_s=600.0, in_match_s=600.0, counters={}, incidents=[],
+    ))
+    window.nav.button(history_index).click()
+    assert window.stack.currentIndex() == history_index
+    assert window.pages["History"].sessions_table.rowCount() == 1

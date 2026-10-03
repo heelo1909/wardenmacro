@@ -2,6 +2,7 @@ from warden.geometry import Rect
 from warden.platform.window import (
     FocusGate,
     WindowInfo,
+    client_process_names,
     is_browser,
     pick_browser_with_title,
     pick_client,
@@ -102,3 +103,30 @@ def test_focus_gate_with_no_target():
     gate = FocusGate(FakeBackend())
     assert not gate.is_focused()
     assert not gate.refocus()
+
+
+# --------------------------------------------------------------------------- macOS process names
+
+
+def test_client_process_names_is_mac_specific_and_falls_back_otherwise(monkeypatch):
+    import warden.platform.window as window_mod
+
+    monkeypatch.setattr(window_mod.sys, "platform", "darwin")
+    assert client_process_names() == frozenset({"robloxplayer"})
+    # Anything that isn't macOS (including this project's Linux dev sandbox,
+    # which is why the fixtures above all use "robloxplayerbeta.exe") gets the
+    # Windows name - matching every pre-existing test's assumption.
+    monkeypatch.setattr(window_mod.sys, "platform", "linux")
+    assert client_process_names() == frozenset({"robloxplayerbeta.exe"})
+
+
+def test_pick_client_accepts_an_explicit_process_name_override():
+    windows = [win(hwnd=1, process_name="robloxplayer", client=Rect(0, 0, 1920, 1080))]
+    assert pick_client(windows) is None  # not the default (Windows) name
+    assert pick_client(windows, client_processes={"robloxplayer"}) is not None
+
+
+def test_mac_browser_process_names_are_recognized():
+    assert is_browser(win(process_name="google chrome"))
+    assert is_browser(win(process_name="safari"))
+    assert not is_browser(win(process_name="robloxplayer"))

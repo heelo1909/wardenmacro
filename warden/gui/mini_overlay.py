@@ -20,7 +20,16 @@ class MiniOverlay(QWidget):
         self.ctx = ctx
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground, False)
-        self.setStyleSheet(f"background: {theme.CARD}; border: 1px solid {theme.BORDER}; border-radius: 8px;")
+        self.setObjectName("MiniOverlay")
+        # theme.stylesheet() first, so the labels below pick up the normal
+        # TEXT/Muted colors instead of the OS default (they used to get none
+        # at all); the #MiniOverlay-scoped rule after it is this widget's own
+        # background, kept off the plain "QWidget" selector so it doesn't also
+        # paint a border around every child label.
+        self.setStyleSheet(theme.stylesheet(0.9) + f"""
+            QWidget#MiniOverlay {{ background: {theme.CARD}; border: 1px solid {theme.BORDER};
+                                    border-radius: 8px; }}
+        """)
         self.setFixedSize(260, 44)
 
         layout = QHBoxLayout(self)
@@ -59,8 +68,18 @@ class MiniOverlay(QWidget):
             return
         from PySide6.QtGui import QGuiApplication
 
+        # client_rect comes from the window backend in physical screen pixels
+        # (Win32 rects always are; macOS Quartz ones too, on a Retina display);
+        # QWidget.move() takes Qt's own logical pixels, so this needs the same
+        # devicePixelRatioF() correction guided_capture.py/loadout_teacher.py
+        # already apply - without it the overlay lands off-position on any
+        # display scaled above 100%.
+        ratio = self.devicePixelRatioF() or 1.0
         screen = QGuiApplication.primaryScreen().geometry()
-        x = client_rect.right + 8
+        right = int(client_rect.right / ratio)
+        left = int(client_rect.left / ratio)
+        top = int(client_rect.top / ratio)
+        x = right + 8
         if x + self.width() > screen.width():
-            x = max(client_rect.left - self.width() - 8, 8)
-        self.move(x, client_rect.top)
+            x = max(left - self.width() - 8, 8)
+        self.move(x, top)

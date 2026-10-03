@@ -17,17 +17,19 @@ dependencies = [
     "psutil>=5.9",
     "pynput>=1.7",
     "pywin32>=306; sys_platform == 'win32'",
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]
 ocr = ["pytesseract>=0.3.10"]
-input-fallbacks = ["pydirectinput>=1.0.4"]
+input-fallbacks = ["pydirectinput>=1.0.4; sys_platform == 'win32'"]
 integrations = [
     "requests>=2.31",
     "discord.py>=2.3",
     "fastapi>=0.110",
     "uvicorn>=0.29",
-    "winotify>=1.1",
+    "winotify>=1.1; sys_platform == 'win32'",
 ]
 dev = ["pytest>=8.0", "pyinstaller>=6.5"]
 

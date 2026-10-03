@@ -27,6 +27,7 @@ from warden.gui.context import AppContext
 from warden.gui.widgets import (
     ResponsiveGrid,
     ResponsiveRow,
+    SessionHistoryChart,
     StatTile,
     StatusChip,
     card,
@@ -130,6 +131,19 @@ class HomePage(QWidget):
             self.tile_grid.add(tile)
         counters_layout.addWidget(self.tile_grid)
         layout.addWidget(counters_card)
+
+        # -- session history graph ---------------------------------------------------
+        history_card, history_layout = card()
+        history_header = QHBoxLayout()
+        history_header.addWidget(section_label("Recent sessions"))
+        history_header.addStretch(1)
+        self.history_caption = muted("")
+        history_header.addWidget(self.history_caption)
+        history_layout.addLayout(history_header)
+        self.history_chart = SessionHistoryChart()
+        history_layout.addWidget(self.history_chart)
+        layout.addWidget(history_card)
+        self.refresh_history()
 
         # -- automation toggles ---------------------------------------------------
         auto_card, auto_layout = card()
@@ -259,6 +273,21 @@ class HomePage(QWidget):
         self.tile_grid.min_item_width = int(120 * scale)
         self.mid_row.breakpoint = int(620 * scale)
         self.bottom_row.breakpoint = int(640 * scale)
+        self.history_chart.set_scale(scale)
+
+    def refresh_history(self) -> None:
+        """Re-reads the persisted past-session summaries (section 9) and
+        redraws the chart. Called on load and again whenever a session ends,
+        since that's the only time a new sessions/*.json file appears.
+        """
+        summaries = self.ctx.session_summaries()
+        self.history_chart.set_sessions(summaries)
+        if not summaries:
+            self.history_caption.setText("")
+            return
+        total_minutes = sum(max(s.get("in_match_s", 0.0), 0.0) for s in summaries) / 60.0
+        noun = "session" if len(summaries) == 1 else "sessions"
+        self.history_caption.setText(f"{len(summaries)} {noun} all-time · {total_minutes / 60:.1f}h in-match")
 
     def _handle_stop(self) -> None:
         self.start_btn.setEnabled(True)

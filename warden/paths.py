@@ -28,7 +28,13 @@ def data_home() -> Path:
     override = os.environ.get("WARDEN_HOME")
     if override:
         return Path(override)
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_NAME
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return Path(base) / APP_NAME
+    # Linux/other (also what this project's own dev/test sandbox runs under): XDG data dir.
+    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     return Path(base) / APP_NAME
 
 

@@ -1,17 +1,43 @@
-"""Windows toast notifications (HANDOFF section 8.13). Optional dependency
-(``winotify``) - degrades to a no-op (returns False) rather than crashing
-when it isn't installed.
+"""Desktop toast/banner notifications (HANDOFF section 8.13). Windows uses the
+optional ``winotify`` dependency; macOS needs nothing extra - ``osascript`` (a
+native "display notification" via Notification Center) ships with the OS.
+Either way this degrades to a no-op (returns False) rather than crashing if
+the backend isn't available.
 """
 
 from __future__ import annotations
 
 import logging
+import subprocess
+import sys
 from collections.abc import Callable
 
 log = logging.getLogger(__name__)
 
 
+class _MacNotification:
+    """Shaped like ``winotify.Notification`` (same constructor kwargs, a
+    ``.show()`` call) so ``ToastNotifier.notify`` doesn't need to care which
+    backend it got.
+    """
+
+    def __init__(self, app_id: str = "", title: str = "", msg: str = "", duration: str = "short"):
+        self.title = title
+        self.msg = msg
+
+    def show(self) -> None:
+        script = f"display notification {_osa_quote(self.msg)} with title {_osa_quote(self.title)}"
+        subprocess.run(["osascript", "-e", script], check=True,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+
+
+def _osa_quote(text: str) -> str:
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _default_backend():
+    if sys.platform == "darwin":
+        return _MacNotification
     try:
         from winotify import Notification
     except ImportError:

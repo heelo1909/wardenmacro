@@ -122,12 +122,18 @@ class ShutdownCountdown:
 
 def power_action(kind: str) -> None:
     """Real sleep/shutdown. Never called by tests - they pass their own ``action``."""
-    if sys.platform != "win32":
-        log.warning("power action '%s' requested on non-Windows platform; ignoring", kind)
-        return
-    if kind == "sleep":
-        import ctypes
+    if sys.platform == "win32":
+        if kind == "sleep":
+            import ctypes
 
-        ctypes.windll.powrprof.SetSuspendState(False, True, False)
-    elif kind == "shutdown":
-        subprocess.run(["shutdown", "/s", "/t", "0"], check=False)
+            ctypes.windll.powrprof.SetSuspendState(False, True, False)
+        elif kind == "shutdown":
+            subprocess.run(["shutdown", "/s", "/t", "0"], check=False)
+        return
+    if sys.platform == "darwin":
+        if kind == "sleep":
+            subprocess.run(["pmset", "sleepnow"], check=False)
+        elif kind == "shutdown":
+            subprocess.run(["osascript", "-e", 'tell application "System Events" to shut down'], check=False)
+        return
+    log.warning("power action '%s' requested on unsupported platform (%s); ignoring", kind, sys.platform)

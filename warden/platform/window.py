@@ -18,7 +18,8 @@ from warden.geometry import Rect
 
 log = logging.getLogger(__name__)
 
-CLIENT_PROCESS = "robloxplayerbeta.exe"
+CLIENT_PROCESS = "robloxplayerbeta.exe"  # Windows
+CLIENT_PROCESS_MAC = "robloxplayer"      # macOS: RobloxPlayer.app/Contents/MacOS/RobloxPlayer
 # Anything that is a browser (or another app) must never be targeted, even if titled "Roblox".
 BROWSER_CLASSES = frozenset({
     "Chrome_WidgetWin_0",
@@ -28,10 +29,24 @@ BROWSER_CLASSES = frozenset({
     "IEFrame",
 })
 BROWSER_PROCESSES = frozenset({
+    # Windows
     "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe", "iexplore.exe",
+    # macOS (psutil process names, lowercased)
+    "google chrome", "safari", "firefox", "microsoft edge", "brave browser", "opera", "vivaldi",
 })
 UPDATER_PROCESSES = frozenset({"robloxplayerlauncher.exe", "robloxplayerinstaller.exe"})
 UPDATER_TITLE_HINTS = ("roblox", "bootstrapper", "updat", "install")
+
+
+def client_process_names() -> frozenset[str]:
+    """The lowercase process name(s) that count as 'the real Roblox client' on
+    this OS. macOS gets its own name; every other platform (including this
+    project's Linux dev/test sandbox) falls back to the Windows one, which is
+    what the existing tests' fixtures already assume.
+    """
+    if sys.platform == "darwin":
+        return frozenset({CLIENT_PROCESS_MAC})
+    return frozenset({CLIENT_PROCESS})
 
 
 @dataclass(frozen=True)
@@ -57,11 +72,12 @@ def is_browser(win: WindowInfo) -> bool:
     return win.class_name in BROWSER_CLASSES or win.process_name in BROWSER_PROCESSES
 
 
-def pick_client(windows: Iterable[WindowInfo]) -> WindowInfo | None:
+def pick_client(windows: Iterable[WindowInfo], client_processes: Iterable[str] | None = None) -> WindowInfo | None:
     """The Roblox game client: right process, not a browser, visible, biggest client area."""
+    names = frozenset(client_processes) if client_processes is not None else client_process_names()
     candidates = [
         w for w in windows
-        if w.process_name == CLIENT_PROCESS and not is_browser(w) and w.visible
+        if w.process_name in names and not is_browser(w) and w.visible
     ]
     if not candidates:
         return None
@@ -259,3 +275,28 @@ class Win32Windows:
         pt = self._wt.POINT()
         self._user32.GetCursorPos(ctypes.byref(pt))
         return pt.x, pt.y
+
+
+# --------------------------------------------------------------------------- backend factory
+
+
+def make_window_backend() -> WindowBackend:
+    """The real ``WindowBackend`` for whatever OS this is actually running on.
+
+    Every caller that used to hardcode ``Win32Windows()`` goes through this
+    instead, so Warden picks the right backend (and fails with a clear,
+    actionable message instead of an OS error) on macOS too.
+    """
+    if sys.platform == "win32":
+        return Win32Windows()
+    if sys.platform == "darwin":
+        try:
+            from warden.platform.window_mac import MacWindows
+
+            return MacWindows()
+        except ImportError as exc:
+            raise OSError(
+                "macOS window support needs the pyobjc packages - install with:\n"
+                "  pip install pyobjc-framework-Quartz pyobjc-framework-Cocoa"
+            ) from exc
+    raise OSError(f"Warden doesn't support this OS yet ({sys.platform}) - only Windows and macOS are supported")

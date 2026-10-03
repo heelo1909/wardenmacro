@@ -190,6 +190,56 @@ def test_history_page_records_transitions_from_bus(ctx):
     assert "LOBBY" in page.table.item(0, 1).text()
 
 
+def test_history_page_timeline_starts_with_an_empty_state_placeholder(ctx):
+    page = HistoryPage(ctx)
+    assert page.table.rowCount() == 1
+    assert "no transitions yet" in page.table.item(0, 1).text()
+
+
+def _write_session(warden_home, ended_at, in_match_s, preset_id="glass_wrap", label="Glass Wrap",
+                    duration_s=None, incidents=()):
+    from warden.core.persistence import SessionSummary, save_session_summary
+
+    save_session_summary(warden_home / "sessions", SessionSummary(
+        preset_id=preset_id, label=label, started_at=ended_at - (duration_s or in_match_s),
+        ended_at=ended_at, duration_s=duration_s or in_match_s, in_match_s=in_match_s,
+        counters={}, incidents=list(incidents),
+    ))
+
+
+def test_home_page_chart_shows_past_sessions(ctx, warden_home):
+    _write_session(warden_home, ended_at=1_700_000_000, in_match_s=600.0)
+    _write_session(warden_home, ended_at=1_700_003_600, in_match_s=1800.0)
+    page = HomePage(ctx)
+    assert page.history_chart._values == [10.0, 30.0]
+    assert "2 sessions all-time" in page.history_caption.text()
+
+
+def test_home_page_chart_empty_state_before_any_session(ctx):
+    page = HomePage(ctx)
+    assert page.history_chart._values == []
+    assert page.history_caption.text() == ""
+
+
+def test_home_page_refresh_history_picks_up_a_new_session(ctx, warden_home):
+    page = HomePage(ctx)
+    assert page.history_chart._values == []
+    _write_session(warden_home, ended_at=1_700_000_000, in_match_s=900.0)
+    page.refresh_history()
+    assert page.history_chart._values == [15.0]
+
+
+def test_history_page_refresh_sessions_populates_table_newest_first(ctx, warden_home):
+    _write_session(warden_home, ended_at=1_700_000_000, in_match_s=600.0, label="First")
+    _write_session(warden_home, ended_at=1_700_003_600, in_match_s=1800.0, label="Second",
+                    incidents=["disconnect"])
+    page = HistoryPage(ctx)
+    assert page.sessions_table.rowCount() == 2
+    assert page.sessions_table.item(0, 1).text() == "Second"  # newest first
+    assert page.sessions_table.item(0, 4).text() == "1"  # one incident
+    assert page.sessions_table.item(1, 1).text() == "First"
+
+
 def test_diagnostics_page_runs_without_roblox(ctx):
     page = DiagnosticsPage(ctx)
     assert "DPI awareness" in page.output.toPlainText()

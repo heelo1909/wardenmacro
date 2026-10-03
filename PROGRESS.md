@@ -283,6 +283,105 @@ Warden's own window covering the game was being captured as an "unknown screen".
   "To Duels" button and in-world queue pads, not a Play -> mode list flow), and the
   lobby also shows a health bar - so health_bar alone can't tell lobby from match.
 
+## Graph + UI polish + macOS round (2026-10-02)
+
+User: "make there have a graph for the warden main page, and also make sure that the
+ui and ux are great... and that its mac compatable, u can make 2 versions if its not
+possible to make it mac compatible." One codebase, platform-dispatched at runtime,
+rather than two forks - the pieces that touch the OS were already isolated behind
+small backend classes/functions, which made this additive rather than a rewrite.
+
+**Session-history graph:**
+- `gui/widgets.py: SessionHistoryChart` - hand-drawn (QPainter, like the existing
+  `_ProgressBar`/`ImageCanvas`) amber bar chart of in-match minutes per session, reading
+  the per-session summaries (`sessions/<timestamp>.json`) `PersistenceManager` already
+  wrote every session - no new tracking needed, this data just wasn't surfaced anywhere.
+- Home page: new "Recent sessions" card (last 12), refreshed on load and whenever a
+  session ends (`MainWindow._refresh_history_views`, called from both `_stop()` and the
+  contract-queue auto-advance path - both write a new session file).
+- History page was previously a stub ("full history arrives with Phase 6" - Phase 6
+  shipped long ago, the page just never got updated): now shows the same chart (last 24)
+  plus a sortable-by-recency table of every past session, and refreshes when its nav
+  button is clicked. The live current-session timeline table stays, now with an
+  empty-state placeholder row instead of a blank table before the first transition.
+
+**UI/UX pass** (subagent-audited, then fixed):
+- `QDialog`/`QMessageBox` had no background rule in `theme.stylesheet()`, so every
+  dialog (session summary, calibration-needed prompt, preset rename/delete) rendered
+  with the OS's native light background next to Warden's dark chrome. Added one.
+- `StatusChip`'s "warn" and "accent" tones were the identical color - Paused/Recovering
+  looked the same as ordinary Queueing. Warn is now a red-tinted amber.
+- `MiniOverlay` never applied the shared stylesheet, so its timer/counts labels had no
+  color at all (invisible or OS-default); `dock_outside()` also positioned it using a
+  raw physical-pixel rect with no `devicePixelRatioF()` correction, unlike every other
+  overlay panel - wrong at any display scaling above 100%, Retina included. Fixed both.
+- `CalibrationPage` had no `apply_scale` (unlike every other page), so its two preview
+  canvases stayed fixed at 300px tall and forced a scrollbar on a small window instead
+  of shrinking with it.
+- Font stack was Windows-only (`Segoe UI Variable...`); added macOS system-font
+  fallbacks. Diagnostics' log output was hardcoded to `Consolas` (Windows-only
+  monospace font); added a cross-platform stack (new `theme.MONOSPACE_STACK`).
+
+**macOS compatibility:**
+- The Win32-specific pieces were already behind small seams (`WindowBackend` protocol
+  in `platform/window.py`, a swappable `Capturer` protocol in `vision/capture.py`,
+  `InputController`'s fallback chain already ending in cross-platform `pynput`) - adding
+  a second OS meant filling in the macOS side of those seams, not restructuring.
+  `platform/window.py: make_window_backend()` is the one new dispatch point (replaces
+  every direct `Win32Windows()` call); `WindowBackend`'s pure logic (`pick_client`,
+  `FocusGate`, the state machine, ...) is unchanged and OS-agnostic either way.
+- `platform/window_mac.py: MacWindows` (new) - window enumeration/focus via Quartz's
+  `CGWindowListCopyWindowInfo` + AppKit's `NSRunningApplication`. Known caveat (can't
+  verify without a Mac): Quartz reports a window's full frame including its title bar,
+  where Win32's `GetClientRect` (what the rest of Warden assumes) is content-only -
+  documented in the module and the README; playing RIVALS fullscreen avoids it entirely.
+- `vision/capture.py: WindowCapturer._quartz_capture` - the macOS equivalent of the
+  existing `PrintWindow` path: `CGWindowListCreateImage` rasterizes by window id, so
+  anything on top of Roblox (Warden itself included) still doesn't end up in the frame.
+  Byte-layout logic (`_cgimage_to_bgr`) is split out as a pure function so it's unit
+  tested against a fake image object without pyobjc installed.
+- Input needed **no new code**: `platform/input.py` already tries SendInput, then
+  pydirectinput, then `pynput` per key/click, and both Windows-only methods already
+  self-disqualify (`sys.platform` guards) - macOS just falls through to `pynput`, which
+  already works there. Same story for global hotkeys (`platform/hotkeys.py`, already
+  pure `pynput`).
+- `platform/power.py: SleepGuard` - added a macOS path using `caffeinate` (ships with
+  the OS; held open for the session's duration, terminated on `release()`, same
+  "sticky until cleared" shape as `SetThreadExecutionState`). `core/scheduler.py:
+  power_action` - added `pmset sleepnow` / `osascript ... shut down` for the
+  post-session sleep/shutdown action.
+- `integrations/toast.py` - added `_MacNotification` (shells out to `osascript
+  display notification`, ships with the OS, no package needed) alongside the existing
+  `winotify` path.
+- `paths.py: data_home()` - macOS now gets `~/Library/Application Support/Warden`
+  instead of silently falling into the Windows `AppData\Local` branch (which doesn't
+  exist on Mac - this was a real bug, not just a missing feature, that nobody had hit
+  yet since Warden had never run on Mac before).
+- `platform/process.py` - `_startfile` uses `open` (macOS) instead of `os.startfile`
+  (Windows-only); `RobloxProcess.pids()` matches `robloxplayer` (macOS process name) or
+  `robloxplayerbeta.exe` (Windows) via `window.client_process_names()`.
+- Packaging: `warden.spec` now branches on `sys.platform` - same Analysis/hidden-imports
+  setup, but wraps the build in a `BUNDLE()` for a real `Warden.app` on macOS instead of
+  a bare folder. PyInstaller can't cross-compile (a `.app` has to be built *on* a Mac),
+  so also added `Run Warden (Mac).command` / `Rebuild Warden.app (Mac).command` -
+  double-click launchers that bootstrap their own `.venv` on first run, so running from
+  source needs no terminal commands either.
+- Tests: new `tests/test_mac_platform.py` fakes just enough of Quartz/AppKit/`caffeinate`/
+  `osascript` (shaped like the real documented APIs) to exercise `MacWindows`, the CGImage
+  byte-layout conversion, `SleepGuard`, `power_action`, and the toast/process/paths
+  branches on this Linux dev sandbox - the same "test the logic, not the OS" approach
+  already used for `test_power.py`'s Win32 mocking. **None of this has run on real macOS
+  hardware** - there isn't one in this environment, the same gap the Windows-only pieces
+  already had until the user ran them for real. First real Mac run is the actual test;
+  the README's new "macOS notes" section covers the Screen Recording/Accessibility
+  permissions it'll need.
+
+Full suite: same 40 pre-existing failures as before this round (all either need a real
+Windows/macOS OS call or a real X display for `pynput` - this dev sandbox is plain
+Linux with neither), zero new ones; 47 new tests added (`tests/test_mac_platform.py`
+plus additions to `test_window.py`/`test_gui_pages.py`/`test_main_window_session.py`),
+all passing.
+
 ## ALL PHASES COMPLETE (0 through 9)
 
 What's left, for the user:
@@ -387,11 +486,20 @@ since you may want to try it earlier.
 - GUI smoke tests run offscreen (`QT_QPA_PLATFORM=offscreen`, set in `tests/conftest.py`).
 - Session timer / in-match-% / contract progress on Home are in-memory only (reset on app
   restart) - durable, cross-restart versions are Phase 6's job (`state.json`).
-- History page only shows the current session's live transitions, not past sessions (needs
-  Phase 6's `sessions/<timestamp>.json`). Calibration page lists missing templates but isn't
-  the real capture/sample/live-overlay wizard yet (Phase 8).
+- ~~History page only shows the current session's live transitions, not past sessions~~
+  fixed in the Graph + UI polish + macOS round - it now reads `sessions/<timestamp>.json`
+  directly. ~~Calibration page lists missing templates but isn't the real capture/
+  sample/live-overlay wizard yet~~ - also done (see the Calibration UX round); this
+  whole bullet was stale, left over from Phase 5 and never updated.
 - Settings page's hotkey fields are free-text key names, not an actual "press a key to bind"
   capture widget - functional but not polished; fine to revisit as a later nicety.
+- **macOS support is new and unverified on real hardware** (this dev environment has no
+  Mac) - the window/capture/input/power/notification backends are built against
+  documented Quartz/AppKit/`caffeinate`/`osascript` behavior and covered by tests that
+  fake those APIs, but the first real run on an actual Mac is the real test. Most likely
+  rough edges: the window-bounds-includes-title-bar caveat (`platform/window_mac.py`'s
+  docstring), and whatever System Settings permission prompts actually look like in
+  practice.
 
 ## Exact next step
 

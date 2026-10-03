@@ -4,7 +4,9 @@ themselves focused on layout/behavior instead of boilerplate styling.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt
+import time
+
+from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt
 from PySide6.QtWidgets import (
     QBoxLayout,
     QFrame,
@@ -88,6 +90,90 @@ class StatusChip(QLabel):
         self.setProperty("tone", tone)
         self.style().unpolish(self)
         self.style().polish(self)
+
+
+class SessionHistoryChart(QFrame):
+    """A small amber bar chart of in-match minutes for the most recent past
+    sessions (``sessions/<timestamp>.json`` - HANDOFF section 9, written once
+    per session by ``PersistenceManager.end_session``). Hand-drawn with
+    QPainter, like ``_ProgressBar``/``ImageCanvas`` elsewhere in this file,
+    so it's themed consistently instead of pulling in a charting library.
+    """
+
+    def __init__(self, max_bars: int = 12):
+        super().__init__(objectName="Chart")
+        self.setStyleSheet("background: transparent; border: none;")
+        self.max_bars = max_bars
+        self.setMinimumHeight(140)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._values: list[float] = []   # minutes, oldest first
+        self._labels: list[str] = []
+        self._scale = 1.0
+
+    def set_scale(self, scale: float) -> None:
+        self._scale = max(scale, 0.01)
+        self.setMinimumHeight(int(140 * self._scale))
+        self.update()
+
+    def set_sessions(self, summaries: list[dict]) -> None:
+        """``summaries`` oldest-first, as ``load_session_summaries`` returns them."""
+        recent = summaries[-self.max_bars:]
+        self._values = [max(s.get("in_match_s", 0.0), 0.0) / 60.0 for s in recent]
+        self._labels = [_short_date(s.get("ended_at")) for s in recent]
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt API)
+        from PySide6.QtGui import QColor, QPainter
+
+        from warden.gui import theme
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        if not self._values:
+            painter.setPen(QColor(theme.TEXT_MUTED))
+            font = painter.font()
+            font.setPointSizeF(max(9 * self._scale, 7))
+            painter.setFont(font)
+            painter.drawText(self.rect(), Qt.AlignCenter,
+                              "No sessions yet - run one and it'll show up here.")
+            return
+
+        pad_bottom, pad_top = int(18 * self._scale), int(16 * self._scale)
+        plot_h = max(h - pad_bottom - pad_top, 1)
+        top_value = max(max(self._values), 1.0)
+        n = len(self._values)
+        gap = max(4 * self._scale, 2)
+        bar_w = max((w - gap * (n + 1)) / n, 2)
+
+        painter.setPen(QColor(theme.BORDER))
+        painter.drawLine(0, h - pad_bottom, w, h - pad_bottom)
+
+        font = painter.font()
+        font.setPointSizeF(max(7.5 * self._scale, 6))
+        painter.setFont(font)
+        last = n - 1
+        for i, (val, label) in enumerate(zip(self._values, self._labels)):
+            x = gap + i * (bar_w + gap)
+            bar_h = plot_h * (val / top_value)
+            y = h - pad_bottom - bar_h
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(theme.ACCENT if i == last else theme.ACCENT_PRESSED))
+            painter.drawRoundedRect(QRectF(x, y, bar_w, max(bar_h, 2)), 3, 3)
+            painter.setPen(QColor(theme.TEXT_MUTED))
+            painter.drawText(QRectF(x - gap / 2, h - pad_bottom + 2, bar_w + gap, pad_bottom - 2),
+                              Qt.AlignHCenter | Qt.AlignTop, label)
+            if i == last:
+                painter.setPen(QColor(theme.TEXT))
+                painter.drawText(QRectF(x - 20, max(y - pad_top, 0), bar_w + 40, pad_top),
+                                  Qt.AlignHCenter | Qt.AlignTop, f"{val:.0f}m")
+
+
+def _short_date(ts) -> str:
+    try:
+        return time.strftime("%m/%d", time.localtime(float(ts)))
+    except (TypeError, ValueError, OSError):
+        return "?"
 
 
 class ImageCanvas(QLabel):

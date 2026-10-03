@@ -8,19 +8,21 @@ numpy>=1.26
 psutil>=5.9
 pynput>=1.7
 pywin32>=306; sys_platform == 'win32'
+pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'
+pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'
 
 # Optional: OCR (also needs the Tesseract binary installed)
 pytesseract>=0.3.10
 
-# Optional: input fallback
-pydirectinput>=1.0.4
+# Optional: input fallback (Windows only - macOS always has pynput as a fallback)
+pydirectinput>=1.0.4; sys_platform == 'win32'
 
 # Optional: integrations
 requests>=2.31
 discord.py>=2.3
 fastapi>=0.110
 uvicorn>=0.29
-winotify>=1.1
+winotify>=1.1; sys_platform == 'win32'  # macOS notifications use the built-in osascript instead
 
 # Dev
 pytest>=8.0

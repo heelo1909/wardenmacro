@@ -7,6 +7,7 @@ import io
 
 from PySide6.QtWidgets import QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
 
+from warden.gui import theme
 from warden.gui.context import AppContext
 from warden.gui.widgets import card, page_header
 
@@ -26,7 +27,7 @@ class DiagnosticsPage(QWidget):
         body_layout.addWidget(self.run_btn)
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
-        self.output.setStyleSheet("font-family: Consolas, monospace;")
+        self.output.setStyleSheet(f"font-family: {theme.MONOSPACE_STACK};")
         body_layout.addWidget(self.output)
         layout.addWidget(body, 1)
         self._run()
