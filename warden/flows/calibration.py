@@ -166,8 +166,8 @@ def calibration_gaps(app, preset, detector_templates: TemplateLibrary | None = N
             if not weapon:
                 continue
             if not weapon_templates.exists(weapon_template_path(slot, weapon)):
-                gaps.append(("warn", f"no weapon template for {slot} '{weapon}' - Warden can't select it "
-                                     f"(Calibration > Learn my loadout)"))
+                gaps.append(("info", f"{slot} '{weapon}': not learned yet - pick it yourself in the first "
+                                     f"match and Warden will remember it"))
             if app.loadout_ui.mode == "tabs" and slot not in app.loadout_ui.slots:
                 gaps.append(("warn", f"loadout picker layout for '{slot}' isn't set up"))
     return gaps
@@ -330,7 +330,7 @@ def quick_calibrate(app, name: str, frame: np.ndarray, sel: tuple[float, float, 
     save_template_from_frame(templates, rel, frame, sel)
     threshold = cfg.template.threshold if cfg.template is not None else 0.78
     new = cfg.model_copy(update={
-        "method": "template", "template": TemplateSpec(path=rel, threshold=threshold),
+        "method": "template", "template": TemplateSpec(path=rel, threshold=threshold, ref_height=frame.shape[0]),
         "roi": ROI(x1=roi[0], y1=roi[1], x2=roi[2], y2=roi[3]), "params": params,
     })
     return new, "saved what it looks like"

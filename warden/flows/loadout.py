@@ -234,7 +234,12 @@ class SequentialLoadoutTransaction:
         settle_s: float = 0.6,
         verify_attempts: int = 3,
         change_threshold: float = 10.0,
+        learn_missing: bool = True,
     ):
+        # learn_missing: a weapon Warden has never seen isn't a failure - it
+        # waits for the player to pick it themselves once and learns it from
+        # that click (see learn_from_click). Zero setup for weapons.
+        self.learn_missing = learn_missing
         self.actions = actions
         self.templates = templates
         self.ui = ui
@@ -292,12 +297,17 @@ class SequentialLoadoutTransaction:
         weapon = self.target[slot]
         template = self.templates.get(weapon_template_path(slot, weapon))
         if template is None:
-            self._fail(slot, weapon, "no template - use Calibration > Learn my loadout")
+            if self.learn_missing:
+                self._stage = "learn"  # wait for the player's own click (learn_from_click)
+                return False
+            self._fail(slot, weapon, "no template - pick it yourself once so Warden can learn it")
             return self.done
         frame = self.get_frame()
         if frame is None:
             return False
 
+        if self._stage == "learn":
+            self._stage = "top"  # template appeared (learned elsewhere) - carry on
         if self._stage == "top":
             # Lists keep their scroll position; start each search from the top.
             self.actions.scroll(abs(self.ui.scroll_notches) * max(self.ui.max_search_scrolls, 1),
@@ -354,6 +364,31 @@ class SequentialLoadoutTransaction:
             self._wait()
             return False
         return self.done
+
+    @property
+    def waiting_to_learn(self) -> bool:
+        return not self.done and self._stage == "learn"
+
+    def learn_from_click(self, frame: np.ndarray, fx: float, fy: float) -> bool:
+        """The player clicked (fx, fy) in the list while we were waiting to learn
+        the current slot's weapon: remember what that row looks like. Their
+        click already picked it in-game, so move on to the next slot."""
+        if not self.waiting_to_learn:
+            return False
+        crop = learn_row_template(frame, fx, fy, self.ui)
+        if crop is None:
+            return False
+        slot = self.current_slot
+        weapon = self.target[slot]
+        self.templates.save(weapon_template_path(slot, weapon), crop)
+        log.info("loadout: learned %s '%s' from the player's pick", slot, weapon)
+        self.result.slots[slot] = SlotOutcome(slot, weapon, True, False, 0, "learned from your pick")
+        self._index += 1
+        self._stage = "top"
+        self._wait()
+        if self._index >= len(self._order):
+            self.done = True
+        return True
 
     def _fail(self, slot: str, weapon: str, reason: str, scrolls: int = 0) -> None:
         self.result.slots[slot] = SlotOutcome(slot, weapon, False, False, scrolls, reason)

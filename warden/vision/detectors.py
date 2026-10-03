@@ -86,8 +86,10 @@ class Detector:
         tmpl = self.templates.get(cfg.template.path)
         if tmpl is None:
             return (False, 0.0, None, None)
+        base = frame.shape[0] / cfg.template.ref_height if cfg.template.ref_height else 1.0
         match: Match | None = match_template(
             frame, tmpl, cfg.roi.as_list(), cfg.template.scale_min, cfg.template.scale_max, cfg.template.scale_steps,
+            base_scale=base,
         )
         if match is None or match.score < cfg.template.threshold:
             score = match.score if match else 0.0

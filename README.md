@@ -60,7 +60,19 @@ that one feature off — it never crashes the app.
 
 ---
 
-## First run: Calibration
+## Quick start (no setup)
+
+1. Open RIVALS (windowed or fullscreen, any resolution).
+2. Open Warden and press **Start**.
+3. In your **first** match, pick your weapons yourself when the weapon picker shows
+   up - Warden watches and remembers them. From then on it picks them for you.
+
+That's it. Warden ships with the screens it needs to recognise (Play button, game-mode
+menu, Free For All, health bar, weapon picker, respawn button) already set up, and
+they scale to your resolution. Calibration is only for fixing something that isn't
+being recognised (e.g. after a big RIVALS UI update).
+
+## First run: Calibration (optional)
 
 **Quick version (recommended):** open RIVALS, then in Warden go to **Calibration** and
 click **▶ Auto-capture screens**. A small panel appears over the top-right of Roblox and

@@ -85,6 +85,11 @@ class TemplateSpec(_Model):
     scale_max: Annotated[float, Field(gt=0)] = 1.25
     scale_steps: Annotated[int, Field(ge=1, le=41)] = 11
     ref_width: Annotated[int, Field(gt=0)] | None = None  # client width the template was captured at
+    # Client *height* the template was captured at. Roblox UI scales with window
+    # height, so a template cut at 1440p is resized by frame_height/ref_height
+    # before matching - that's what lets the shipped templates work at 1080p,
+    # 1440p, 4K... without anyone calibrating.
+    ref_height: Annotated[int, Field(gt=0)] | None = None
 
     @model_validator(mode="after")
     def _scales(self):

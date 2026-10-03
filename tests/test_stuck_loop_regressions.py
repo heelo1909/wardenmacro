@@ -232,7 +232,8 @@ def test_calibration_gaps_flag_uncalibrated_ffa_path_and_weapons(bundled_config,
     gaps = calibration_gaps(loaded.app, loaded.preset, empty, empty)
     errors = [m for sev, m in gaps if sev == "error"]
     assert any("ffa_tile" in m for m in errors)
-    assert any("Grenade Launcher" in m for sev, m in gaps if sev == "warn")
+    # Weapons aren't a blocker any more: they're learned from the player's first pick.
+    assert any("Grenade Launcher" in m for sev, m in gaps if sev == "info")
 
 
 def test_calibration_gaps_clear_once_templates_exist(bundled_config, tmp_path):

@@ -70,6 +70,12 @@ class LiveActions:
         # flow needs one after each click - the per-tick frame was captured
         # before the click happened.
         self.frame_grabber = None
+        import collections
+
+        self._recent_frames: collections.deque = collections.deque(maxlen=8)
+        self._player_clicks: collections.deque = collections.deque()
+        self._click_listener = None
+        self._click_listener_failed = False
         transaction = (SequentialLoadoutTransaction if app.loadout_ui.mode == "sequential"
                        else LoadoutTransaction)
         self.loadout = transaction(
@@ -89,6 +95,47 @@ class LiveActions:
 
     def update_detections(self, detections: dict[str, Detection]) -> None:
         self.detections = detections
+        frame = detections.get("_last_frame")
+        if frame is not None:
+            self._recent_frames.append((time.monotonic(), frame))
+
+    # -- learning weapons from the player's own picks (zero setup) ---------------
+
+    def _ensure_click_listener(self) -> None:
+        if self._click_listener is not None or self._click_listener_failed:
+            return
+        try:
+            from warden.gui.loadout_teacher import start_pynput_click_listener
+
+            self._click_listener = start_pynput_click_listener(
+                lambda x, y: self._player_clicks.append((time.monotonic(), x, y)))
+            self._emit("loadout.learning", "Pick your weapons yourself this once - Warden is watching "
+                                           "and will remember them for next time.", "info")
+        except Exception:
+            self._click_listener_failed = True
+            log.exception("couldn't start the click listener for weapon learning")
+
+    def _process_player_clicks(self) -> None:
+        rect = self.input.rect() if callable(getattr(self.input, "rect", None)) else None
+        while self._player_clicks:
+            t, x, y = self._player_clicks.popleft()
+            if rect is None or rect.is_empty() or not hasattr(self.loadout, "learn_from_click"):
+                continue
+            fx, fy = (x - rect.left) / rect.width, (y - rect.top) / rect.height
+            before = [f for ts, f in self._recent_frames if ts <= t - 0.02]
+            frame = before[-1] if before else None
+            if frame is not None and self.loadout.learn_from_click(frame, fx, fy):
+                slot = self.loadout.result.slots
+                learned = [o.weapon for o in slot.values() if o.reason == "learned from your pick"]
+                self._emit("loadout.learned", f"learned {learned[-1]} from your pick", "success")
+
+    def stop_learning(self) -> None:
+        if self._click_listener is not None:
+            try:
+                self._click_listener.stop()
+            except Exception:
+                pass
+            self._click_listener = None
 
     def _loadout_frame(self):
         if self.frame_grabber is not None:
@@ -199,6 +246,12 @@ class LiveActions:
         if not getattr(self, "_loadout_begun", False):
             self.begin_loadout()
         done = self.loadout.tick()
+        if getattr(self.loadout, "waiting_to_learn", False):
+            self._ensure_click_listener()
+            self._process_player_clicks()
+            done = self.loadout.done
+        else:
+            self._player_clicks.clear()  # only the player's picks *while learning* count
         if done and getattr(self, "_loadout_reported", False):
             return self.loadout.result.success
         if done:
@@ -532,7 +585,8 @@ class TickLoop:
         if self.bot_runner is not None and self.bot_runner.available():
             threading.Thread(target=self._run_bot_safely, daemon=True, name="warden-discord-bot").start()
         for severity, message in self.calibration_gaps():
-            self.bus.emit("calibration.missing", message, level="error" if severity == "error" else "warn")
+            self.bus.emit("calibration.missing", message,
+                          level={"error": "error", "warn": "warn"}.get(severity, "info"))
         attach = self.client_already_running()
         if attach:
             self.bus.emit("session.attach", "Roblox is already running - taking over the open client "
@@ -566,6 +620,7 @@ class TickLoop:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
+        self.actions.stop_learning()
         self.input.release_all()  # never leave W (or anything) held after Stop
         self._finalize_session()
 

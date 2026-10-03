@@ -187,6 +187,26 @@ before these changes. **Needs a re-run on Windows** and a **PyInstaller rebuild*
 (`dist\Warden` is still the old build). Live Roblox verification not possible from
 this session (no desktop control) - next real run should start with Calibration.
 
+## Zero-setup round (2026-10-02)
+
+User: "people will think it's too hard to set up - how do I do it without taking
+pictures for calibration". Now nothing needs calibrating:
+- Every screen on the lobby -> FFA -> match path ships as a template cut from real
+  RIVALS frames: lobby_play (Play button), mode_list (menu's red X), ffa_tile ("Free For
+  All" title), weapon_picker (the white "current slot" square - visible even when the
+  list is scrolled, unlike the "Random" row), respawn_prompt ("Respawn" text), plus the
+  colour-based health bar. Verified on every saved frame: hits >=0.97, misses <=0.65.
+- `TemplateSpec.ref_height` (shipped = 1440): templates are scaled by
+  frame_height/ref_height before matching, so 1080p/1440p/4K all work. Verified on the
+  1080p clip and on 1440p frames downscaled to 1080p.
+- **Weapons learn themselves**: `SequentialLoadoutTransaction(learn_missing=True)` picks
+  the weapons it knows and, for one it doesn't, waits for the player's own click in the
+  list (pynput listener + rolling frame buffer in `LiveActions`), saves that row as the
+  template, and picks it automatically from then on. Missing weapons are now an "info"
+  note, not a Start warning.
+- User's local copies of the screen templates removed (backed up) so the shipped ones
+  are used; their junk full-screen Assault_Rifle template removed (backed up).
+
 ## Clip review (2026-10-02, 18:31 run)
 
 User clip + log: Warden sat in LOADING ~60s in the lobby doing nothing, then only got

@@ -248,7 +248,7 @@ class MainWindow(QMainWindow):
             log.exception("calibration check failed")
             return True
         blocking = [m for sev, m in gaps if sev == "error"]
-        minor = [m for sev, m in gaps if sev != "error"]
+        minor = [m for sev, m in gaps if sev == "warn"]
         if not blocking:
             return True
         choice = self._ask_calibration(blocking, minor)
