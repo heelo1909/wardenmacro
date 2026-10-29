@@ -29,10 +29,8 @@ pip install -r requirements.txt
 python -m warden
 ```
 
-On macOS, double-click **`Run Warden (Mac).command`** instead — it sets up its own
-`.venv` and installs everything the first time you run it, so there's nothing to type
-in a terminal. (Equivalent manual commands: `python3 -m venv .venv`, `source
-.venv/bin/activate`, `pip install -r requirements.txt`, `python3 -m warden`.)
+On a Mac, don't use these commands: download the **DMG** instead (see **Mac** below).
+It's a normal Mac app, so there's no Python, no Terminal and no setup script.
 
 Or run it as a packaged build (no Python install needed) — see **Packaging** below.
 
@@ -75,9 +73,10 @@ Mac notes:
 - **Windowed vs. fullscreen Roblox:** Warden trims the title bar off a windowed Roblox
   window automatically (`mac.title_bar_pt` in config.yaml, default 28). If clicks
   land slightly off, play RIVALS in **fullscreen**.
-- **Running from source instead** (developers): double-click `Run Warden (Mac).command`.
-  It makes its own `.venv` the first time. Permissions then belong to **Terminal**,
-  not Warden.app.
+- **The DMG is the only supported way to run Warden on a Mac.** The old
+  `.command` launchers are gone. Developers can still run from source with the
+  commands above (`python3` instead of `python`), but permissions then belong to
+  Terminal, not Warden.app.
 - Everything else (calibration, presets, Discord/LAN integrations, troubleshooting)
   works the same as on Windows; swap in `~/Library/Application Support/Warden`
   wherever this README says `%LOCALAPPDATA%\Warden`.
@@ -287,10 +286,9 @@ pyinstaller warden.spec --clean
 
 On Windows this produces a one-folder build at `dist\Warden\Warden.exe` — copy the
 whole `Warden\` folder wherever you like; it carries its own `config\` defaults and
-doesn't need Python installed on the target machine. On macOS, run the same command
-(or double-click `Rebuild Warden.app (Mac).command`) **on a Mac** — PyInstaller
-builds a native app for whichever OS it's running on, so a `.app` can't be built
-from Windows, and the result is `dist/Warden.app` instead. Nothing gameplay-specific
+doesn't need Python installed on the target machine. The Mac app can't be built
+from Windows (PyInstaller only builds for the OS it runs on), which is why GitHub
+builds it, as described above. Nothing gameplay-specific
 is hardcoded anywhere in the Python source — every detector range, ROI, keybind,
 place ID, and loadout lives in `config\default.yaml` / `config\presets\*.yaml`,
 which this build step copies in as the shipped defaults (never overwritten on an

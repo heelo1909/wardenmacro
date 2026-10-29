@@ -6,6 +6,11 @@
 
 ## 0. How to work on this (read first, Claude Code)
 
+> **Since 2026-10-29 the repo uses the stage harness in `CLAUDE.md` and `PRINCIPLES.md`.** Phases 0–9
+> below are finished history. New work is the **Stages** list at the end of section 10: one prompt =
+> one stage, each ending with a smoke check, `python scripts/smoke.py`, the verifier, a PROGRESS.md
+> entry, commit and push. Where the bullets below disagree with `CLAUDE.md`, `CLAUDE.md` wins.
+
 - Build in the **phases in section 10**, in order. Each phase has a Definition of Done (DoD).
 - Keep a `PROGRESS.md` at the repo root: current phase, what's done, decisions made, known issues, exact next step. Update it at the end of every phase and before any long pause. Commit after each phase.
 - **If your context gets cleared/compacted:** re-read `HANDOFF.md` and `PROGRESS.md`, then continue from the first unchecked DoD item. Don't redo finished phases.
@@ -42,7 +47,7 @@ Fully unattended grinding of RIVALS playtime contracts (first target: **Glass Wr
 
 ## 3. Tech stack
 
-- Python 3.12 (64-bit), Windows 10/11
+- Python 3.12 (64-bit), Windows 10/11; macOS 13+ as a DMG built by GitHub Actions (`warden-mac-handoff.md`)
 - **GUI:** PySide6
 - **Capture & vision:** `mss`, `opencv-python`, `numpy`; `pytesseract` optional (OCR features degrade gracefully if Tesseract isn't installed)
 - **Input:** own `ctypes` wrapper around `SendInput` (scan-code keys, relative mouse moves, clicks) as primary; `pydirectinput` then `pynput` as fallbacks
@@ -401,12 +406,32 @@ keys:
 - [ ] README: install, Tesseract (optional), first-run calibration walkthrough, public vs share-link note, Discord setup, troubleshooting, and a clear note that automating play is against Roblox's rules and can get the account banned — test on an alt
 - [ ] No gameplay-specific values hardcoded anywhere; everything lives in config/presets
 
+### Stages (one prompt each; tick here and in PROGRESS.md "Stages")
+
+IDs: `M` Mac, `W` Windows/both, `L` live test, `H` harness, `B-NNN` bug, `R-n` refactor.
+**(needs the user)** = can't finish without them. **[design]** = approved note in `docs/design/` first.
+
+- [x] **M0-M4** — Mac port code and DMG release workflow. Ref: `warden-mac-handoff.md` §7 Phases 0–4.
+- [x] **H0** — Stage harness (CLAUDE.md, PRINCIPLES.md, smoke, hooks, verifier) and DMG as the only Mac launch path. Ref: user request 2026-10-29.
+- [ ] **M4U** — **(needs the user)** First Mac CI run. The user pushes `main` and creates the pre-release tag `v0.0.1-mactest`; Claude fixes whatever the "Mac release" log shows until the run is green and both DMGs are on the pre-release. Ref: `warden-mac-handoff.md` §5, §7 Phase 4.
+- [ ] **M5a** — **(needs the user)** Real-Mac checklist steps 1–4 (install from DMG, permissions, Roblox window found, capture has no title bar and right colors). Ref: `warden-mac-handoff.md` §7 Phase 5.
+- [ ] **M5b** — **(needs the user)** Real-Mac checklist steps 5–10 (clicks land, loadout, hotkeys, reconnect, stop, stays awake). Ref: same.
+- [ ] **M5c** — Fix what M5a/M5b found (one `B-NNN` stage per bug), then the user tags the first normal release `v0.2.0`. Ref: same, §8 risks.
+- [ ] **W1** — **[design]** Corner emergency stop: `CornerWatch` exists but nothing starts it on either OS, while the README describes it. Wire it in (both OSes) or take it out of the README. Ref: §6.2, Phase 1 DoD "emergency stop works".
+- [ ] **L1** — **(needs the user)** Windows live recovery test on an alt account: kill `RobloxPlayerBeta.exe` mid-match, Warden gets back into public FFA with the loadout verified. Ref: Phase 4 last DoD item.
+
 ---
 
 ## 11. Testing rules
 
 - Every detector and flow has offline tests using synthetic frames or recordings in `fixtures/frames/`.
 - Live tests only when I explicitly start one, preferably on an alt account.
+- Every test and smoke run is observe-only: `scripts/smoke.py` sets `WARDEN_FORCE_OBSERVE_ONLY=1`
+  (no real clicks or keys, whatever config says) and a temp `WARDEN_HOME`. Tests never write into the
+  repo's `config/` or `templates/`.
+- OS APIs (Win32, Quartz, AppKit, IOKit) are tested through fakes. Real-Mac behavior is only proven by
+  the M5 checklist on a personally owned Mac.
+- Every stage adds a permanent check in `smoke_checks/`; the smoke suite re-runs all of them.
 - When a live run hits something unexpected, save the recording and add it as a regression fixture.
 
 ---

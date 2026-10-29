@@ -1,0 +1,113 @@
+{
+  "result": "PASS",
+  "quick": false,
+  "started_at": "2026-10-29T16:29:55+00:00",
+  "finished_at": "2026-10-29T16:30:04+00:00",
+  "platform": "linux",
+  "python": "3.10.12",
+  "git_head": "5eb0167c3d9996993f4026df26e2a124ebf5348b",
+  "code_fingerprint": "ebd2ea4fd41573f2e4aa864d7b7018bddd0a374df8a58a35d00f7e3fdca4acb4",
+  "checks": [
+    {
+      "name": "h0_dmg_only.py",
+      "ok": true,
+      "seconds": 0.0,
+      "output": ""
+    },
+    {
+      "name": "h0_harness.py",
+      "ok": true,
+      "seconds": 0.1,
+      "output": ""
+    },
+    {
+      "name": "h0_observe_only_env.py",
+      "ok": true,
+      "seconds": 0.2,
+      "output": ""
+    },
+    {
+      "name": "m2_mac_input.py",
+      "ok": true,
+      "seconds": 0.0,
+      "output": ""
+    },
+    {
+      "name": "m2_retina.py",
+      "ok": true,
+      "seconds": 0.1,
+      "output": ""
+    },
+    {
+      "name": "m3_mac_setup.py",
+      "ok": true,
+      "seconds": 0.1,
+      "output": ""
+    },
+    {
+      "name": "m4_packaging.py",
+      "ok": true,
+      "seconds": 0.3,
+      "output": ""
+    },
+    {
+      "name": "w_tickloop_backend.py",
+      "ok": true,
+      "seconds": 0.2,
+      "output": ""
+    },
+    {
+      "name": "warden --selftest",
+      "ok": true,
+      "output": ""
+    }
+  ],
+  "pytest": {
+    "ok": true,
+    "total": 530,
+    "failed": [
+      "tests/test_contract_queue.py::test_no_target_reached_event_for_clock_time_stop",
+      "tests/test_contract_queue.py::test_tick_loop_emits_target_reached_with_preset_id",
+      "tests/test_gui_pages.py::test_home_page_live_stats_refresh_reads_counters",
+      "tests/test_gui_pages.py::test_home_page_start_pause_resume_stop_lifecycle",
+      "tests/test_gui_pages.py::test_home_page_status_chip_follows_state_machine",
+      "tests/test_hotkeys.py::test_hotkeys_builds_pynput_mapping_and_skips_empty_bindings",
+      "tests/test_hotkeys.py::test_hotkeys_handler_exceptions_are_swallowed",
+      "tests/test_main_window_contract_queue.py::test_target_reached_advances_to_the_next_preset_and_restarts",
+      "tests/test_main_window_contract_queue.py::test_target_reached_event_for_a_different_preset_is_ignored",
+      "tests/test_main_window_contract_queue.py::test_target_reached_for_a_preset_not_in_queue_is_ignored",
+      "tests/test_main_window_session.py::test_start_minimizes_the_main_window",
+      "tests/test_main_window_session.py::test_stop_shows_summary_dialog_with_live_counters",
+      "tests/test_power.py::test_acquire_sets_continuous_system_and_display_flags",
+      "tests/test_power.py::test_acquire_without_display_flag",
+      "tests/test_power.py::test_context_manager_acquires_and_releases",
+      "tests/test_power.py::test_failed_acquire_reports_inactive",
+      "tests/test_power.py::test_release_restores_plain_continuous_and_clears_active",
+      "tests/test_power.py::test_release_without_prior_acquire_does_nothing",
+      "tests/test_tick.py::test_live_actions_click_falls_back_to_default_position",
+      "tests/test_tick.py::test_live_actions_run_loadout_without_captured_templates_fails_safely",
+      "tests/test_tick.py::test_start_stop_background_loop",
+      "tests/test_tick.py::test_tick_loop_constructs_and_ticks_without_roblox_running",
+      "tests/test_tick.py::test_tick_once_is_safe_to_call_repeatedly",
+      "tests/test_tick_contract_verification.py::test_ocr_text_in_lobby_corrects_banked_hours",
+      "tests/test_tick_contract_verification.py::test_ocr_verification_handles_missing_detection",
+      "tests/test_tick_contract_verification.py::test_ocr_verification_ignores_unparseable_text",
+      "tests/test_tick_contract_verification.py::test_ocr_verification_skipped_outside_lobby",
+      "tests/test_tick_contract_verification.py::test_ocr_verification_skipped_when_disabled_in_config",
+      "tests/test_tick_integrations.py::test_bookkeep_sends_periodic_status_and_stops_at_target",
+      "tests/test_tick_integrations.py::test_disconnect_incident_alerts_the_webhook_and_toasts",
+      "tests/test_tick_integrations.py::test_milestone_and_target_toast_on_reaching_target",
+      "tests/test_tick_lan_dashboard_missing_dep.py::test_lan_dashboard_missing_fastapi_degrades_gracefully",
+      "tests/test_tick_persistence_scheduler.py::test_clean_stop_clears_incomplete_flag_and_writes_session_summary",
+      "tests/test_tick_persistence_scheduler.py::test_count_lobby_time_credits_any_active_state",
+      "tests/test_tick_persistence_scheduler.py::test_credited_time_accumulates_only_in_match_by_default",
+      "tests/test_tick_persistence_scheduler.py::test_incidents_are_collected_from_the_bus_and_saved_on_stop",
+      "tests/test_tick_persistence_scheduler.py::test_persisted_state_survives_a_simulated_crash",
+      "tests/test_tick_persistence_scheduler.py::test_scheduled_stop_does_not_deadlock_without_a_running_thread",
+      "tests/test_tick_persistence_scheduler.py::test_shutdown_countdown_is_cancelable_after_scheduled_stop",
+      "tests/test_tick_persistence_scheduler.py::test_stop_at_small_target_hours_triggers_scheduled_stop"
+    ],
+    "unexpected": [],
+    "now_passing": []
+  }
+}

@@ -30,7 +30,7 @@ from warden.integrations.lan_dashboard import LanDashboardServer
 from warden.integrations.toast import ToastNotifier
 from warden.platform import dpi
 from warden.platform.power import SleepGuard
-from warden.platform.input import InputController, build_methods
+from warden.platform.input import InputController, build_methods, forced_observe_only
 from warden.platform.process import Launcher, RobloxProcess
 from warden.platform.window import FocusGate, Win32Windows, make_window_backend, pick_client, pick_updater
 from warden.vision.capture import MssCapturer, WindowCapturer
@@ -346,7 +346,7 @@ class TickLoop:
         methods = build_methods(app.input.methods)
         self.input = InputController(
             methods, self.focus_gate, rect=lambda: self._client_rect,
-            humanizer=self.humanizer, bus=bus, observe_only=app.observe_only,
+            humanizer=self.humanizer, bus=bus, observe_only=app.observe_only or forced_observe_only(),
             jiggle_px=app.input.jiggle_px, key_hold_ms=tuple(app.input.key_hold_ms),
         )
         self.launcher = Launcher()

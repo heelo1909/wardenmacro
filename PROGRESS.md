@@ -1,6 +1,79 @@
 # PROGRESS.md
 
-## Current phase
+Read only "Current status" at the start of a prompt (CLAUDE.md). Keep these headings exactly as they are:
+`scripts/progress_view.py` and the Stop hook read them.
+
+## Current status
+- **Next stage:** M4U — first Mac CI run (needs the user)
+- **Last stage:** H0 — stage harness + DMG-only Mac launch — DONE 2026-10-29
+- **Smoke:** see STATUS.md (generated)
+- **Waiting on the user:** push `main`, then create the pre-release tag `v0.0.1-mactest` (steps in warden-mac-handoff.md §7 Phase 4)
+- **Live tests needed:** M5a, M5b (real Mac), L1 (Windows recovery)
+
+## Stages
+Mirror of HANDOFF.md §10 "Stages". Tick in both places.
+
+- [x] M0-M4 — Mac port code and DMG release workflow
+- [x] H0 — Stage harness and DMG-only Mac launch
+- [ ] M4U — First Mac CI run (needs the user)
+- [ ] M5a — Real-Mac checklist steps 1–4 (needs the user)
+- [ ] M5b — Real-Mac checklist steps 5–10 (needs the user)
+- [ ] M5c — Fix M5 findings, release v0.2.0
+- [ ] W1 — Corner emergency stop [design]
+- [ ] L1 — Windows live recovery test (needs the user)
+
+## Stage log
+Newest first. Copy the template for each stage.
+
+### Template
+- Date: YYYY-MM-DD HH:MM–HH:MM
+- Status: DONE | PARTIAL (what's left) | FAILED
+- Ref: HANDOFF §… / warden-mac-handoff §… / BUG-NNN
+- Built:
+- Smoke check added: smoke_checks/<file>.py
+- Smoke test: PASS (N checks, pytest X passed / Y known env-only failures on <os>)
+- Verifier: PASS | FAIL → fixed → PASS (rounds: n)
+- Decisions:
+- Needs the user:
+
+### H0 — Stage harness and DMG-only Mac launch
+- Date: 2026-10-29 11:33–12:50 (Cowork session, Linux sandbox)
+- Status: DONE
+- Ref: user request 2026-10-29 ("make it run with the DMG"; adapt the CLAUDE.md harness)
+- Built: removed `Run Warden (Mac).command` and `Rebuild Warden.app (Mac).command`; README now sends Mac users to the DMG only. Added CLAUDE.md, PRINCIPLES.md, HANDOFF §0/§10 Stages/§11, this file's harness sections, `scripts/smoke.py`, `scripts/progress_view.py`, `scripts/harness_common.py`, `scripts/known_env_failures.json`, `smoke_checks/` (8 checks), `.claude/` (Stop/PreToolUse/SessionStart hooks, verifier and test-writer agents, /stage /bugfix /refactor /design /retro), `docs/bugs/TEMPLATE.md`, `docs/design/TEMPLATE.md`, `tests/test_harness.py`. Safety net: `WARDEN_FORCE_OBSERVE_ONLY=1` forces observe-only in `TickLoop`.
+- Smoke check added: smoke_checks/h0_harness.py, h0_dmg_only.py, h0_observe_only_env.py (plus m2_/m3_/m4_/w_ checks covering the Mac port)
+- Smoke test: PASS (8 smoke checks, selftest, pytest 530 tests: 490 passed / 40 known env-only failures on linux, 0 unexpected)
+- Verifier: PASS (round 1; 2 nits: CRLF line endings lost in tests/test_tick.py, fixed; HANDOFF §3 stack line is M0-M4 scope, kept)
+- Decisions: H1–H6 below.
+- Needs the user: M4U (push + tag). Claude Code's hooks call `python`; if `python` isn't on PATH in Git Bash, the hooks fail open with an error, so install it from python.org or the Microsoft Store first.
+
+### M0-M4 — Mac port code and DMG release workflow
+- Date: 2026-10-29 (Cowork session, before the harness)
+- Status: DONE (code); first CI run is M4U
+- Ref: warden-mac-handoff.md §7 Phases 0–4
+- Built: Quartz input + key map, Retina helpers, title-bar trim, Mac setup screen, Mac defaults, `--selftest`, `.app` spec, DMG script, `mac-release.yml`; fixed `TickLoop` hardcoding `Win32Windows()`. Details under History → "Mac port".
+- Smoke check added: (harness didn't exist yet; covered by H0's m2_/m3_/m4_/w_ checks)
+- Smoke test: n/a then; pytest 515 tests, same 40 Linux env-only failures as before
+- Verifier: n/a (pre-harness)
+- Needs the user: M4U
+
+## Live tests needed
+- **M5a / M5b:** the real-Mac checklist (warden-mac-handoff.md §7 Phase 5), personally owned Mac, alt account.
+- **L1:** Windows: kill `RobloxPlayerBeta.exe` mid-match → back in public FFA with the loadout verified.
+- Map-vote detector seen in a real session (from the 2026-10-03 round).
+
+## Decisions
+- **H1 (2026-10-29):** The DMG is the only supported way to run Warden on a Mac. The `.command` launchers were removed: they needed Python and opened Terminal, which the user can't use. Developers can still run from source by hand.
+- **H2:** Single component, so `smoke_checks/` lives at the repo root (the harness template had one per component).
+- **H3:** Smoke runs the whole pytest suite. The only allowed failures are the 40 Linux-sandbox ones (no Win32, no X display) in `scripts/known_env_failures.json`; Windows and Mac lists are empty, so on the user's PC every test must pass.
+- **H4:** "Smoke newer than the last code change" is checked by a content hash of all code files (`harness_common.code_fingerprint`), not timestamps, so it works across machines. `.smoke/last-run.json` and `STATUS.md` are committed; `.smoke/gate-blocks.txt` is ignored.
+- **H5:** The Stop hook lets Claude stop after 3 blocks in a row (printing why) so it can't loop forever.
+- **H6:** `WARDEN_FORCE_OBSERVE_ONLY=1` (set by smoke) forces observe-only input in `TickLoop`; it does not change launch/kill/power actions, which tests already fake.
+- Earlier decisions (1–48, Mac port) are under History.
+
+## History (before the stage harness)
+
+### Current phase
 
 **Mac port (warden-mac-handoff.md): Phases 0-4 built (2026-10-29), waiting on the
 Phase 4 user test** - push, tag `v0.0.1-mactest`, confirm the workflow is green and both
@@ -18,7 +91,7 @@ that live test will mean anything - the detector/loadout/recovery-UI values
 shipped are uncalibrated placeholders everywhere, by design (see Decisions).
 
 **⚠️ Incident during Phase 5 (2026-10-01), already handled - see "Decisions"
-#29/#30 and `warden-testing-safety` memory:** a manual GUI smoke test briefly
+##29/#30 and `warden-testing-safety` memory:** a manual GUI smoke test briefly
 ran the real tick loop while the user's actual Roblox client happened to be
 open and focused. A read-only screenshot right after showed the lobby
 untouched; flagged to the user via SendUserFile + a message. Fixed the root
@@ -26,15 +99,15 @@ cause (test isolation forcing `observe_only`) and separately found/reverted
 two test files that were accidentally writing to the real checked-in
 `config/` instead of a temp copy - also fixed. No repeat since.
 
-## Phase checklist
+### Phase checklist
 
-### Phase 0 — Scaffold
+#### Phase 0 — Scaffold
 - [x] Repo, `requirements.txt` / `pyproject.toml`, pydantic config schema, logging, event bus, `PROGRESS.md`
 - [x] `python -m warden` opens an empty themed window
 - [x] Default config loads and validates; invalid config shows a readable error
 - [x] `pytest` runs green (21 tests)
 
-### Phase 1 — Platform & vision core
+#### Phase 1 — Platform & vision core
 - [x] Window finder ignores browser tabs (mocked window lists) — `warden/platform/window.py`
 - [x] Focus-confirm gate — `FocusGate` in same file
 - [x] DPI-aware capture; fraction ↔ pixel tested at 100/125/150% — `warden/geometry.py`, `warden/platform/dpi.py`
@@ -43,14 +116,14 @@ two test files that were accidentally writing to the real checked-in
 - [x] Observe-only mode, frame recorder, `tools/diagnostics_cli.py` — `warden/tools/recorder.py`, `warden/tools/diagnostics_cli.py`
 - [x] `pytest` runs green (87 tests)
 
-### Phase 2 — State machine, lobby, FFA, respawn, match end
+#### Phase 2 — State machine, lobby, FFA, respawn, match end
 - [x] All 15 states in §6.1 implemented with timeouts and fallbacks — `warden/core/state_machine.py`
 - [x] Replay tests over synthetic frame sequences cover every transition, incl. early-abort of FFA search + mid-game join — `tests/test_state_machine.py` (71 cases), `warden/tools/replay.py` + `tests/test_replay.py`
 - [x] Respawn double-press logic tested; Respawns counter increments — `warden/flows/respawn.py`, `tests/test_flows_respawn.py`
 - [x] Bonus: wired Phase 1 + Phase 2 into a real drivable loop — `warden/core/tick.py` (`LiveActions` + `TickLoop`), runs safely with no Roblox present
 - [x] `pytest` runs green (156 tests)
 
-### Phase 3 — Loadout transactions
+#### Phase 3 — Loadout transactions
 - [x] 4/4 verified commit path — `warden/flows/loadout.py` (`LoadoutTransaction`), `tests/test_flows_loadout.py` (13 cases)
 - [x] Single-slot mismatch → corrected → Loadout fixes +1 — `LoadoutResult.fixes`
 - [x] Abort on death mid-transaction, retried at next safe window — already handled by `_handle_loadout` in Phase 2 (`run_loadout()` is a single idempotent step the state machine can abandon any tick; already-equipped slots are skipped on retry, so nothing is redone)
@@ -58,7 +131,7 @@ two test files that were accidentally writing to the real checked-in
 - [x] Wired into `LiveActions.run_loadout`/`reapply_loadout_if_due` in `core/tick.py` — two `TemplateLibrary` instances (repo-root for detector anchor templates, `weapon_templates_dir` for per-weapon templates)
 - [x] `pytest` runs green (169 tests)
 
-### Phase 4 — Recovery
+#### Phase 4 — Recovery
 - [x] One-frame modal flash does **not** trigger recovery — `_StreakConfirmer` (Phase 2) + regression test
 - [x] Leave preferred over Reconnect; 3 attempts then browser fallback; then backoff — `warden/flows/recovery.py` (`RecoverySequence`)
 - [x] Frozen-frame, process-gone, and updater triggers tested — Phase 2 global interrupts, re-verified with the fixed confirmers
@@ -66,7 +139,7 @@ two test files that were accidentally writing to the real checked-in
 - [ ] **(Live — needs the user)** killing `RobloxPlayerBeta.exe` mid-match → back in public FFA with verified loadout, no input from user. Can't be done offline; see "Live test needed" below.
 - [x] `pytest` runs green (182 tests)
 
-### Phase 5 — GUI
+#### Phase 5 — GUI
 - [x] All pages in section 7, dashboard updates live from the event bus — `warden/gui/pages/{home,loadout,settings,calibration,history,diagnostics}.py`, `warden/gui/bridge.py` (thread-safe EventBus→Qt signal bridge)
 - [x] Presets switch from Home and persist — `AppContext.set_active_preset`/`create_preset`/`delete_preset`
 - [x] Hotkeys work while Roblox is focused — `platform/hotkeys.py` (built Phase 1) now wired to Start/Pause/Stop/Screenshot in `MainWindow._setup_hotkeys`; pynput's global hook isn't scoped to a specific app, so it fires regardless of focus (matches intent)
@@ -75,26 +148,26 @@ two test files that were accidentally writing to the real checked-in
 - [x] Bonus: mini overlay (extras §8.12) — `warden/gui/mini_overlay.py`
 - [x] `pytest` runs green (203 tests)
 
-### Phase 6 — Persistence, tracking, scheduler
+#### Phase 6 — Persistence, tracking, scheduler
 - [x] Kill the app mid-session → relaunch → totals intact, Resume offered — `warden/core/persistence.py` (atomic `state.json`, per-preset `ContractProgress`, all-time counters), Home page's resume banner
 - [x] Stop-at-target works (test with a 0.01 h target) — `warden/core/scheduler.py` (`Scheduler.check`), `TickLoop._scheduled_stop` (never joins its own thread), tested exactly with a 0.01h target
 - [x] Scheduler windows and stop-at-time work; shutdown countdown is cancelable — `in_any_window` (handles midnight wraparound), `ShutdownCountdown`
 - [x] `pytest` runs green (239 tests)
 
-### Phase 7 — Integrations
+#### Phase 7 — Integrations
 - [x] Discord webhook embed on interval + alerts — `warden/integrations/discord_webhook.py` (`DiscordWebhook`); screenshot-in-embed not yet attached (see Decisions #39), everything else works
 - [x] Optional bot commands restricted to the user's Discord user ID — `warden/integrations/discord_bot.py` (`BotCommands` fully tested; `DiscordBotRunner`'s `discord.py` glue is thin and untested - needs a real gateway connection)
 - [x] LAN dashboard reachable from a phone, PIN-gated controls, off by default — `warden/integrations/lan_dashboard.py` (FastAPI app tested via `TestClient`; auto-generates a PIN if left blank rather than ever running unprotected)
 - [x] Toasts and sleep prevention working — `warden/integrations/toast.py`, `warden/platform/power.py` (`SleepGuard`, wired into `TickLoop.start/stop`)
 - [x] `pytest` runs green (299 tests)
 
-### Phase 8 — Calibration, unknown gallery, diagnostics, extras
+#### Phase 8 — Calibration, unknown gallery, diagnostics, extras
 - [x] Calibration wizard can capture a template, sample an HSV range, and show live detections in under a minute per screen — `warden/gui/pages/calibration.py` (real wizard, not the Phase 5 stub): capture live or load an image, drag a selection (`gui/widgets.py`'s `ImageCanvas`), save as template / sample HSV / set ROI / run detection, each one or two clicks
 - [x] Unknown gallery → "make template" flow — second tab on the same page, lists `diagnostics/unknown/*.png`, drag a region, pick a detector name, save
 - [x] Diagnostics page complete (Phase 5); contract OCR verification and contract queue working — `warden/flows/calibration.py` (`parse_contract_hours`), `core/persistence.py` (`verify_contract_hours`), `core/tick.py` (`_maybe_verify_contract`, opportunistic while safely in LOBBY); `gui/context.py` (`advance_contract_queue`), `core/tick.py` emits `schedule.target_reached`, `MainWindow` advances and restarts
 - [x] `pytest` runs green (341 tests)
 
-### Phase 9 — Packaging & docs
+#### Phase 9 — Packaging & docs
 - [x] PyInstaller one-folder build runs — `warden.spec`, `scripts/run_warden.py`. Built and verified on **this** machine (launched the packaged `dist\Warden\Warden.exe`, confirmed the GUI renders correctly, confirmed `--check-config` works); "a clean Windows machine" specifically isn't something I can verify without one - see Decisions #46
 - [x] README: install, Tesseract (optional), first-run Calibration walkthrough, public vs share_link warning, Discord webhook/bot/LAN dashboard setup, troubleshooting, the required Roblox ToS/ban/alt-account warning — `README.md`
 - [x] No gameplay-specific values hardcoded anywhere — swept `warden/*.py` for weapon names, the game name as a value (vs. docstrings), and numeric gameplay constants; the only one found is `place_id`'s schema default (17625359962), which is HANDOFF §6.6's own documented default and is override-able per-preset, not a hidden hardcoded value
@@ -102,7 +175,7 @@ two test files that were accidentally writing to the real checked-in
 
 ---
 
-## Post-Phase-9 fixes (user testing, 2026-10-01)
+### Post-Phase-9 fixes (user testing, 2026-10-01)
 
 User tried it for real and reported two things, both now fixed and committed:
 
@@ -135,7 +208,7 @@ reliably showing up in this environment's captured output on every run this
 session, so test counts quoted earlier in this file (e.g. "341" at the end of
 Phase 9) were dot-count estimates and may be slightly off from the true count.
 
-## Post-Phase-9 fixes, round 2 (user testing, 2026-10-01 evening)
+### Post-Phase-9 fixes, round 2 (user testing, 2026-10-01 evening)
 
 User reported: (a) Warden "keeps rejoining and refreshing the game without ever
 opening an FFA and selecting the right weapons", (b) the UI gets cramped and cuts
@@ -191,7 +264,7 @@ before these changes. **Needs a re-run on Windows** and a **PyInstaller rebuild*
 (`dist\Warden` is still the old build). Live Roblox verification not possible from
 this session (no desktop control) - next real run should start with Calibration.
 
-## Zero-setup round (2026-10-02)
+### Zero-setup round (2026-10-02)
 
 User: "people will think it's too hard to set up - how do I do it without taking
 pictures for calibration". Now nothing needs calibrating:
@@ -211,7 +284,7 @@ pictures for calibration". Now nothing needs calibrating:
 - User's local copies of the screen templates removed (backed up) so the shipped ones
   are used; their junk full-screen Assault_Rifle template removed (backed up).
 
-## Clip review (2026-10-02, 18:31 run)
+### Clip review (2026-10-02, 18:31 run)
 
 User clip + log: Warden sat in LOADING ~60s in the lobby doing nothing, then only got
 going because the uncalibrated `midgame_join` green-button guess fired on the Play
@@ -230,7 +303,7 @@ button. Root causes, all fixed and verified against frames from the clip:
 - These three templates now **ship in the repo** (`templates/`, bundled by warden.spec)
   and default.yaml uses them, so a fresh install works without calibrating them.
 
-## Weapons + movement round (2026-10-02 evening)
+### Weapons + movement round (2026-10-02 evening)
 
 User: queueing into FFA works now, but "it doesn't select Grenade Launcher" and "it
 doesn't move or shoot anything". Their latest frames (diagnostics/loadout 18:09-18:11)
@@ -259,7 +332,7 @@ square stays centred at the top). No tabs - the "tabs" loadout model could never
   (primary) and Grenade (utility) templates pre-made from their frames (cross-match
   scores 0.96 vs <=0.62 for other rows). Secondary/melee still need Learn my loadout.
 
-## Calibration UX round (2026-10-02)
+### Calibration UX round (2026-10-02)
 
 User: "I did it, it just said warning, doesn't work" + "make it take the screenshots
 automatically". Their `%LOCALAPPDATA%\Warden` showed: no detector template ever saved;
@@ -287,7 +360,7 @@ Warden's own window covering the game was being captured as an "unknown screen".
   "To Duels" button and in-world queue pads, not a Play -> mode list flow), and the
   lobby also shows a health bar - so health_bar alone can't tell lobby from match.
 
-## Graph + UI polish + macOS round (2026-10-02)
+### Graph + UI polish + macOS round (2026-10-02)
 
 User: "make there have a graph for the warden main page, and also make sure that the
 ui and ux are great... and that its mac compatable, u can make 2 versions if its not
@@ -386,7 +459,7 @@ Linux with neither), zero new ones; 47 new tests added (`tests/test_mac_platform
 plus additions to `test_window.py`/`test_gui_pages.py`/`test_main_window_session.py`),
 all passing.
 
-## Speed, FFA stuck-loop, and pause/resume round (2026-10-03)
+### Speed, FFA stuck-loop, and pause/resume round (2026-10-03)
 
 User, after running the previous round for real: weapon picking was "extremely slow",
 FFA mode-select "keeps trying to scroll down... gets in a loop", and (reported mid-round,
@@ -467,7 +540,7 @@ added across `test_input.py`, `test_flows_lobby.py`, `test_humanize.py`, and
 `test_stuck_loop_regressions.py`, all passing. Verified identically in both the sandbox
 copy and this real project folder after delivery.
 
-## Map-vote detector + further loadout speed, round 3 (2026-10-03)
+### Map-vote detector + further loadout speed, round 3 (2026-10-03)
 
 User reviewed a recorded clip from the round above: the stuck-scroll loop fix held up
 ("the looping works, everything is good except for those") and mouse movement reads as
@@ -521,7 +594,7 @@ avoid repeating the earlier "unknown setting" startup-crash mistake.
 supports, not a live-confirmed one - flag this to the user explicitly and ask for one more
 recorded session to confirm before calling FFA fully done.
 
-## GUI redesign (silver/white) + gradients + weapon dropdowns + Fusion fix, round 4 (2026-10-03)
+### GUI redesign (silver/white) + gradients + weapon dropdowns + Fusion fix, round 4 (2026-10-03)
 
 Separate thread from the three bug fixes above: user asked for a full GUI redesign inspired
 by a competitor's ("Nova") dashboard - new nav/look, silver/white minimalist theme (an
@@ -571,7 +644,7 @@ unconfirmed against live play pending exactly that.
 threads for now rather than keep chasing them without fresh data - both left as-is, not
 reopened without a new log/screenshot from a live session.
 
-## Phase 1 licensing - "Ship it" (2026-10-03)
+### Phase 1 licensing - "Ship it" (2026-10-03)
 
 User circled back to the Licensing & Distribution Proposal doc (built earlier, left pending
 approval) and asked how to actually do it - read as the green light the doc was waiting on.
@@ -619,13 +692,13 @@ permalinks are filled in so a distributed build actually contains this gate. The
 itself was updated in place to reflect Phase 1 being built, rather than left saying "pending
 approval."
 
-## Mac port (warden-mac-handoff.md): Phases 0-4 built, 2026-10-29
+### Mac port (warden-mac-handoff.md): Phases 0-4 built, 2026-10-29
 
 Built in a Cowork session (Linux sandbox, no Mac, no push access), so the work stops
 at Phase 4's user step: **push the code and a test tag, then check the workflow.**
 Phase 5 (real-Mac test) is untouched.
 
-### Phase 0: inventory (every Windows-only call, and where macOS stands)
+#### Phase 0: inventory (every Windows-only call, and where macOS stands)
 
 | File:line | Windows-only call | macOS status |
 |---|---|---|
@@ -652,14 +725,14 @@ moved nothing; it routed the one place that bypassed a seam (`TickLoop`) through
 Windows code paths are byte-for-byte the same apart from that line, which still returns
 `Win32Windows()` on Windows.
 
-### Phase 1: platform interface (no Windows behavior change)
+#### Phase 1: platform interface (no Windows behavior change)
 - `core/tick.py`: `make_window_backend()` instead of `Win32Windows()`.
 - Proof: the full suite has the same 40 environment-only failures as before
   (Linux sandbox: no Win32, no X display for pynput) and **no new ones**. With a fake
   window backend + fake input method injected, all 58 TickLoop/MainWindow/GUI tests
   that normally need Windows pass here too.
 
-### Phase 2: Mac backend
+#### Phase 2: Mac backend
 - `platform/input_mac.py`: `QuartzMethod` (move/drag with delta fields for camera look,
   left/right/middle buttons, keys with held-modifier flags, wheel) and `MAC_KEYCODES`
   (every key in `SCAN_CODES`, unique codes). `InputConfig.methods` accepts `"quartz"`.
@@ -672,7 +745,7 @@ Windows code paths are byte-for-byte the same apart from that line, which still 
 - `vision/capture.py`: Quartz capture passes the content rect, so the title bar is never
   in the frame; `to_point_size()` used by both capture paths.
 
-### Phase 3: Mac setup screen and defaults
+#### Phase 3: Mac setup screen and defaults
 - `platform/permissions_mac.py`: Accessibility (`AXIsProcessTrusted`, prompt via
   `AXIsProcessTrustedWithOptions`), Screen Recording (`CGPreflightScreenCaptureAccess` /
   `CGRequestScreenCaptureAccess`), Input Monitoring (`IOHIDCheckAccess` /
@@ -689,7 +762,7 @@ Windows code paths are byte-for-byte the same apart from that line, which still 
   no-op elsewhere. New `mac:` config section (defaults only, `default.yaml` unchanged).
 - Screenshot: not possible here (no Mac); the page is covered by offscreen Qt tests.
 
-### Phase 4: packaging and CI
+#### Phase 4: packaging and CI
 - `warden --selftest` (`tools/selftest.py`): imports, bundled config + presets validate,
   templates present, first-run seed in a temp folder; on Mac also Quartz/AppKit, the
   three permission checks (read-only) and `QuartzMethod` construction. Exit 0/1.
@@ -707,7 +780,7 @@ Windows code paths are byte-for-byte the same apart from that line, which still 
 - Tests: `tests/test_mac_port.py`, 68 tests, all passing here. Suite: 515 tests, same 40
   environment-only failures as before.
 
-### Known issues / risks for Phase 5
+#### Known issues / risks for Phase 5
 - **Corner emergency stop isn't wired on either OS.** `CornerWatch` exists in
   `platform/input.py` but nothing starts it, even though the README describes it. The
   stop hotkey works. Not changed here (it would change Windows behavior); decide first.
@@ -726,7 +799,7 @@ Windows code paths are byte-for-byte the same apart from that line, which still 
   restored from git (`Run Warden.bat`, `Rebuild Warden.exe.bat`). Delete them again if that
   was intended.
 
-## ALL PHASES COMPLETE (0 through 9)
+### ALL PHASES COMPLETE (0 through 9)
 
 What's left, for the user:
 1. **Run Calibration** (Phase 8's wizard) against your own screen - every detector
@@ -741,7 +814,7 @@ What's left, for the user:
 
 ---
 
-## Live test needed (stopping point for Phase 4's last item)
+### Live test needed (stopping point for Phase 4's last item)
 
 Everything in Phase 4 is built and covered by offline tests (`tests/test_flows_recovery.py`,
 `tests/test_recovery_integration.py`), **except** the one DoD item that can only be verified
@@ -764,7 +837,7 @@ packaging) since most of that doesn't need a live Roblox client either, and Cali
 (Phase 8) is what makes a real live run meaningful. Flagging this now rather than waiting,
 since you may want to try it earlier.
 
-## What exists
+### What exists
 
 - `warden/config/schema.py` — `AppConfig` (config.yaml) + `Preset` (presets/*.yaml). `extra="forbid"` so YAML typos are errors.
 - `warden/config/loader.py` — YAML load, `ConfigError` with one readable line per problem (`detectors.lobby_play.roi: x1 (0.7) must be less than x2 (0.3)`), atomic save, first-run seeding into `%LOCALAPPDATA%\Warden\`.
@@ -774,7 +847,7 @@ since you may want to try it earlier.
 - `config/default.yaml`, `config/presets/{default,glass_wrap,random}.yaml`.
 - `python -m warden --check-config [PATH]` validates and exits (0 ok / 2 invalid).
 
-## Decisions
+### Decisions
 
 1. **Python 3.14** (only version installed; 3.12 not present). All deps install and run on it. `requires-python >= 3.12`. **User confirmed 2026-10-01: stay on newest (3.14).**
 12. **2026-10-01:** user said "continue all of the stages and phases without me" — building straight through per HANDOFF §0's original instruction (stop only at a live-test DoD item, real credentials needed, or a genuine blocker). Per-phase sign-off is no longer required.
@@ -825,7 +898,7 @@ since you may want to try it earlier.
 10. `estimate.count_lobby_time: false` by default (unconfirmed, HANDOFF §12).
 11. Invalid config at GUI start → modal error with the same readable text, exit code 2.
 
-## Known issues
+### Known issues
 
 - GUI smoke tests run offscreen (`QT_QPA_PLATFORM=offscreen`, set in `tests/conftest.py`).
 - Session timer / in-match-% / contract progress on Home are in-memory only (reset on app
@@ -850,7 +923,7 @@ since you may want to try it earlier.
   access in this dev sandbox) - watch the next real session's log to confirm it actually
   matches in play, and recalibrate from the Calibration page if it doesn't.
 
-## Exact next step
+### Exact next step
 
 **Mac port:** the user pushes this code and the tag `v0.0.1-mactest`, then checks the
 Actions run and the Releases page (Phase 4 user test in warden-mac-handoff.md). On a

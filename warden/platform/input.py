@@ -44,6 +44,18 @@ SCAN_CODES: dict[str, tuple[int, bool]] = {
 _ALIASES = {"ESC": "ESCAPE", "RETURN": "ENTER", "CONTROL": "CTRL", "LSHIFT": "SHIFT", " ": "SPACE"}
 
 
+FORCE_OBSERVE_ENV = "WARDEN_FORCE_OBSERVE_ONLY"
+
+
+def forced_observe_only() -> bool:
+    """True when the environment forces observe-only (no real clicks or keys),
+    whatever config.yaml says. ``scripts/smoke.py`` sets it for every smoke run so
+    a test can never drive the user's real Roblox window (CLAUDE.md safety rule)."""
+    import os
+
+    return os.environ.get(FORCE_OBSERVE_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def normalize_key(name: str) -> str:
     key = name.strip().upper()
     key = _ALIASES.get(key, key)

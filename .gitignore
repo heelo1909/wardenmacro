@@ -12,3 +12,6 @@ recordings/
 logs/
 # sales bot's real config holds admin Discord IDs + live purchase links
 sales-bot/config.json
+
+# stage harness: the Stop hook's loop counter (last-run.json and STATUS.md ARE committed)
+.smoke/gate-blocks.txt

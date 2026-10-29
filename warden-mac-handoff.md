@@ -1,15 +1,17 @@
 # HANDOFF: Warden for Mac (port and DMG release)
 
 > **Status (2026-10-29):** Phases 0–4 are built and their code is in this repo.
-> Next up is the **Phase 4 user test** (push + test tag), then **Phase 5** (real Mac).
-> `PROGRESS.md` → "Mac port" has the Phase 0 inventory, decisions and known issues.
+> Next up is stage **M4U** (the Phase 4 user test: push + test tag), then **M5a/M5b** (real Mac).
+> Work now follows the stage harness in `CLAUDE.md`; the stage list is `HANDOFF.md` §10 "Stages".
+> `PROGRESS.md` → History → "Mac port" has the Phase 0 inventory, decisions and known issues.
+> **Mac users only ever get the DMG.** There are no `.command` launchers any more.
 
 ## 0. Read first (Claude Code)
 
-- Build one phase at a time, keep `PROGRESS.md` updated, and **STOP after every phase** with a Phase Report. Wait for "go", "fix: ...", or "redo".
+- Follow `CLAUDE.md`: one prompt = one stage, ending with a smoke check, `python scripts/smoke.py`, the verifier, a `PROGRESS.md` entry, commit and push. Then stop and wait for the user.
 - The user can't code and doesn't have a personal Mac with Terminal. **All Mac building happens on GitHub's macOS runners** (GitHub Actions). Real-device testing happens on a personally owned Mac (a family member's or friend's), never a school or work Mac.
 - **Don't break Windows.** Mac code stays behind the existing platform seams (`make_window_backend()`, the `InputMethod` chain, `Capturer`, `SleepGuard`, `power_action`) or behind `sys.platform == "darwin"`. Windows behavior stays identical.
-- **Testing baseline:** in a Linux sandbox the suite is 515 tests with **40 known environment-only failures** (Win32 ctypes, pynput without an X display). "No new failures" is the bar there. On Windows, the full suite must pass as before. Never run a live `TickLoop` against a real Roblox client in tests (see PROGRESS.md Decisions #29).
+- **Testing baseline:** in a Linux sandbox the suite is 515 tests with **40 known environment-only failures** (Win32 ctypes, pynput without an X display). "No new failures" is the bar there. On Windows, the full suite must pass as before. Never run a live `TickLoop` against a real Roblox client in tests (PROGRESS.md History → Decisions #29); smoke forces observe-only.
 
 ## 1. Goal
 
@@ -98,4 +100,6 @@ Fix what fails (each fix: Windows tests still pass), then tag a normal release (
 
 ## 9. Kickoff prompt (paste into Claude Code in the repo folder)
 
-> Read warden-mac-handoff.md and the "Mac port" section of PROGRESS.md in full. Phases 0–4 are built; Phase 4's user test is next. Help me push the code and the `v0.0.1-mactest` tag (I can't use Terminal on a Mac; I'm on Windows), then wait while I check the Actions run and the Releases page. If the run fails, fix only what the log shows, then STOP with a Phase Report (Built, Tested by me, Could not test, Known issues, Your test, I need from you). Do not start Phase 5 until I reply "go". Never change how the Windows version behaves. Never add anything that works around device management or macOS permissions.
+> /stage
+>
+> (That's all: CLAUDE.md tells Claude Code what to read. The next stage is M4U. I'm on Windows; I can't use Terminal on a Mac. Mac users only get the DMG.)

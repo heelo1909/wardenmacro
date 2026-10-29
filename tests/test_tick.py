@@ -22,12 +22,15 @@ def test_tick_once_is_safe_to_call_repeatedly(bundled_config):
         loop.tick_once()  # no exception with no client window present
 
 
-def test_live_actions_click_falls_back_to_default_position(bundled_config):
+def test_live_actions_click_falls_back_to_default_position(bundled_config, monkeypatch):
     # observe_only stays False here on purpose, to exercise the "blocked, not
     # observed" path - safe because FocusGate.set_target() is never called in
     # this test (we never run tick_once()), so gate.hwnd stays 0 and
     # is_focused() is unconditionally False regardless of what's running on
-    # the host: no real input can be sent no matter what.
+    # the host: no real input can be sent no matter what. For the same reason
+    # it switches off smoke's WARDEN_FORCE_OBSERVE_ONLY safety net, which would
+    # otherwise turn "blocked" into "observed".
+    monkeypatch.delenv("WARDEN_FORCE_OBSERVE_ONLY", raising=False)
     loaded = load_all(bundled_config / "default.yaml")
     bus = EventBus()
     events = []
