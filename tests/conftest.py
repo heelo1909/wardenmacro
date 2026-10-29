@@ -10,6 +10,13 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
+def pytest_sessionfinish(session, exitstatus):
+    """Shut Qt down in a fixed order before the interpreter exits (BUG-001)."""
+    from qt_teardown import shutdown_qt_app
+
+    shutdown_qt_app()
+
+
 @pytest.fixture(autouse=True)
 def warden_home(tmp_path, monkeypatch):
     """Point the data folder at a temp dir so tests never touch %LOCALAPPDATA%\\Warden."""
