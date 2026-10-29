@@ -268,6 +268,8 @@ class ImageCanvas(QLabel):
     def paintEvent(self, event) -> None:
         from PySide6.QtGui import QColor, QPainter, QPen
 
+        from warden.gui import theme
+
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor("#000000"))
         geo = self._display_geometry()
@@ -275,7 +277,7 @@ class ImageCanvas(QLabel):
             disp_w, disp_h, ox, oy, _scale = geo
             painter.drawPixmap(int(ox), int(oy), int(disp_w), int(disp_h), self._pixmap)
         if self._selection_px is not None:
-            painter.setPen(QPen(QColor("#F2A93B"), 2))
+            painter.setPen(QPen(QColor(theme.SELECTION), 2))
             x1, y1 = self._frame_to_label(*self._selection_px[:2])
             x2, y2 = self._frame_to_label(*self._selection_px[2:])
             painter.drawRect(int(min(x1, x2)), int(min(y1, y2)), int(abs(x2 - x1)), int(abs(y2 - y1)))

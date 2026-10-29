@@ -289,6 +289,20 @@ class Integrations(_Model):
     toasts: bool = True
 
 
+class LicenseConfig(_Model):
+    """Gumroad storefront-key gate (Licensing & Distribution Proposal, Phase
+    1: "Ship it"). Disabled by default so a from-source dev copy - including
+    the one in this repo - never asks for a key; flip ``enabled`` on and fill
+    in both permalinks only in a config meant to ship to paying customers
+    (see ``sales-bot/README.md``'s Gumroad setup section).
+    """
+
+    enabled: bool = False
+    pass_permalink: str = ""       # e.g. "warden-24h" from the product's Gumroad URL
+    lifetime_permalink: str = ""   # e.g. "warden-lifetime"
+    pass_hours: Annotated[float, Field(gt=0)] = 24
+
+
 def _parse_hhmm(value: str) -> str:
     parts = str(value).split(":")
     if len(parts) != 2 or not all(p.isdigit() for p in parts):
@@ -367,6 +381,7 @@ class AppConfig(_Model):
     hotkeys: Hotkeys = Field(default_factory=Hotkeys)
     automation: Automation = Field(default_factory=Automation)
     integrations: Integrations = Field(default_factory=Integrations)
+    license: LicenseConfig = Field(default_factory=LicenseConfig)
     scheduler: Scheduler = Field(default_factory=Scheduler)
     gui: GuiConfig = Field(default_factory=GuiConfig)
     estimate: ContractEstimate = Field(default_factory=ContractEstimate)

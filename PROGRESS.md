@@ -517,6 +517,104 @@ avoid repeating the earlier "unknown setting" startup-crash mistake.
 supports, not a live-confirmed one - flag this to the user explicitly and ask for one more
 recorded session to confirm before calling FFA fully done.
 
+## GUI redesign (silver/white) + gradients + weapon dropdowns + Fusion fix, round 4 (2026-10-03)
+
+Separate thread from the three bug fixes above: user asked for a full GUI redesign inspired
+by a competitor's ("Nova") dashboard - new nav/look, silver/white minimalist theme (an
+explicit override of a suggested purple/dark default), then a follow-up pass adding subtle
+"futuristic" gradients while keeping the minimalist feel, and replacing the Loadout page's
+free-text weapon slots with per-slot dropdowns covering every real RIVALS weapon (transcribed
+directly from the user's own 4 in-game weapon-select screenshots - 49 weapons across
+Primary/Secondary/Melee/Utility, including locked ones - after an initial web-sourced draft
+turned out unreliable and was fully discarded). `theme.py` retheme, `GRADIENT_*` constants,
+and `loadout.py`'s `QComboBox` pickers (with "✓ learned" suffixes and a text-lookup fix for
+`currentData()` going stale under `setEditText()`) all verified via offscreen screenshots and
+a new/updated `test_gui_pages.py` test - 393 passed, same 40-failure baseline, at the time.
+
+**User then reported "there are no gradients in sight" on the real Windows app**, despite
+screenshots here showing them correctly. Root cause: Qt defaults to each OS's *native* widget
+style (`windowsvista` on Windows, `macos` on Mac), which paints some widgets - QPushButton
+especially - with the OS's own theming engine and can silently ignore custom QSS
+backgrounds/gradients on them. This sandbox's offscreen platform doesn't use native OS chrome,
+so every screenshot taken here looked right regardless of this bug - it was invisible from
+this side. Confirmed via a full-codebase grep that no `app.setStyle(...)` call existed
+anywhere. Fix: `app.setStyle("Fusion")` added in `warden/__main__.py` right after
+`QApplication` construction - Fusion is Qt's own cross-platform style and renders the
+stylesheet identically on Windows, Mac, and Linux, which also directly covers this round's
+"make sure on Windows AND Mac" requirement. Re-verified: offscreen screenshots unchanged/correct
+with `app.style().objectName()` confirmed as `"fusion"`, full suite still 40/40 baseline,
+zero regressions.
+
+**Why gradients - and the round-3 FFA/speed fixes - may still look "not there" live:**
+`Run Warden.bat` runs straight from source (always current, just needs the app fully quit and
+relaunched to pick up new code - it will not hot-reload into an already-running process).
+`Rebuild Warden.exe.bat`'s output (`dist\Warden\Warden.exe`), if that's what's actually being
+launched day-to-day, does **not** update on its own - it's a frozen snapshot and needs that
+rebuild script re-run after every code change, including this entire GUI-redesign round and
+round 3's map-vote/loadout-speed fixes. This is the leading explanation for the gradients
+report and worth ruling out for the "FFA still needs help" report too, before concluding the
+map-vote detector itself is failing live.
+
+**Not done this round (needs fresh data first):** no further `ui_settle_s` trim - round 3's
+per-slot diagnostic logging was added specifically to capture real pick-duration/verify-count
+data from the *next* live session, and that log hasn't come back yet. Trimming further without
+it risks shaving timing margins that are actually load-bearing for verification reliability.
+Similarly, no further change to the `map_vote` detector itself - no fresh log or screenshot of
+the current "needs help" moment has been reviewed, and round 3 already flagged this fix as
+unconfirmed against live play pending exactly that.
+
+**User confirmed the Fusion fix worked** ("yep it does") and asked to drop the FFA/speed
+threads for now rather than keep chasing them without fresh data - both left as-is, not
+reopened without a new log/screenshot from a live session.
+
+## Phase 1 licensing - "Ship it" (2026-10-03)
+
+User circled back to the Licensing & Distribution Proposal doc (built earlier, left pending
+approval) and asked how to actually do it - read as the green light the doc was waiting on.
+Built the doc's own recommended starting point: a Gumroad storefront-key check.
+
+**`warden/flows/license.py`** (new): `verify_and_activate()` posts to Gumroad's free
+`/v2/licenses/verify` API (real call isolated behind an injectable `verifier`, same pattern as
+`discord_webhook.py`'s `poster`, so tests never touch the network) - tries the pass product's
+permalink first, falls through to lifetime's if the key belongs to the other one, and accepts
+only `uses_count == 1` (Gumroad's own counter, incremented on that one call) - anything higher
+means the key already activated somewhere, which is also what happens if the same pass key is
+re-entered after it expires, since a pass is single-use by design. `has_access()` is the
+every-other-launch path: purely local, no network call - lifetime passes through once
+confirmed, pass checks a locally-stored activation timestamp against `pass_hours`. State
+(key, tier, activated-at, device-confirmed) persists to `license.yaml` under the data home via
+the existing `save_model()` atomic-write helper; a missing or corrupt file just means
+unactivated rather than crashing startup.
+
+**`config/schema.py` + `config/default.yaml`**: new `LicenseConfig` (`enabled`, two Gumroad
+permalinks, `pass_hours`) on `AppConfig.license` - `enabled: false` by default, on purpose, so
+this repo's own dev copy (and anyone building Warden from source) is never gated. Only a
+config built for paying customers should flip it on.
+
+**`warden/__main__.py`**: `_ensure_licensed()` runs right after config loads and before the
+main window opens - a no-op when `license.enabled` is false, otherwise checks local state first
+and only prompts (`QInputDialog`, looped until a valid key or a cancel) when that fails; a
+cancelled prompt exits cleanly (code 3) rather than opening the app unlicensed.
+
+**`tests/test_license.py`** (new, 14 tests): fresh-key activation for both tiers, lifetime vs.
+pass falling through correctly, a reused/already-active key refused, a network failure
+reported rather than raised, disabled licensing always granting access, pass-tier expiry at the
+`pass_hours` boundary, and state-file round-trip/corruption handling. Full suite: same 40
+pre-existing environment-only failures as every prior round, zero new ones, 14 added and
+passing.
+
+**`sales-bot/README.md`**: new step 4 ("Turn on Warden's own license check") - the permalink is
+just the last part of the same purchase link already copied in step 2, goes into the
+distributed build's `config.yaml` under `license:`, with an explicit warning to leave it
+`false` in this repo's own working copy.
+
+**Still manual, by hand, not by Claude** (per the proposal's own risk section and this
+engagement's standing policy on credentials/accounts): creating the two actual Gumroad products
+and turning on their per-sale unique keys, and re-running `Rebuild Warden.exe.bat` once real
+permalinks are filled in so a distributed build actually contains this gate. The proposal doc
+itself was updated in place to reflect Phase 1 being built, rather than left saying "pending
+approval."
+
 ## ALL PHASES COMPLETE (0 through 9)
 
 What's left, for the user:

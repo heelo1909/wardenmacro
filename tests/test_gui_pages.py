@@ -151,7 +151,19 @@ def test_home_page_status_chip_follows_state_machine(ctx):
 def test_loadout_page_lists_presets_and_edits_slots(ctx, tmp_path):
     page = LoadoutPage(ctx)
     assert page.preset_list.count() == 3
-    assert page.slot_edits["primary"].text() == "Grenade Launcher"
+    assert page._get_slot_value(page.slot_edits["primary"]) == "Grenade Launcher"
+
+
+def test_loadout_page_slot_combos_list_known_rivals_weapons(ctx):
+    page = LoadoutPage(ctx)
+    primary = page.slot_edits["primary"]
+    texts = [primary.itemText(i) for i in range(primary.count())]
+    assert any(t.startswith("Grenade Launcher") for t in texts)
+    assert any(t.startswith("Sniper") for t in texts)
+    # a weapon typed outside the known list still round-trips (editable combo)
+    utility = page.slot_edits["utility"]
+    utility.setEditText("Some New Gadget")
+    assert page._get_slot_value(utility) == "Some New Gadget"
 
 
 def test_loadout_page_new_rename_delete(ctx):

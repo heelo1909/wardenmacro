@@ -5,11 +5,11 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QLineEdit,
     QListWidget,
     QMessageBox,
     QPushButton,
@@ -19,6 +19,9 @@ from PySide6.QtWidgets import (
 
 from warden.config.loader import load_preset
 from warden.config.schema import Contract, Preset
+from warden.flows.calibration import template_library
+from warden.flows.loadout import weapon_template_path
+from warden.flows.weapon_catalog import weapons_for
 from warden.gui.context import AppContext
 from warden.gui.widgets import card, page_header, section_label
 from warden.gui.widgets import ResponsiveRow
@@ -66,10 +69,18 @@ class LoadoutPage(QWidget):
         self.preset_list.setMinimumHeight(120)
         form.addRow(self.random_box)
         self.slot_edits = {}
+        templates = template_library(ctx.app.weapon_templates_dir)
         for slot in ("primary", "secondary", "melee", "utility"):
-            edit = QLineEdit()
-            self.slot_edits[slot] = edit
-            form.addRow(slot.title(), edit)
+            combo = QComboBox()
+            combo.setEditable(True)  # a new/renamed weapon not in the list yet still works
+            combo.addItem("")
+            for weapon in weapons_for(slot):
+                label = weapon
+                if templates.exists(weapon_template_path(slot, weapon)):
+                    label += "  ✓ learned"
+                combo.addItem(label, userData=weapon)
+            self.slot_edits[slot] = combo
+            form.addRow(slot.title(), combo)
         editor_layout.addLayout(form)
 
         verify_row = QHBoxLayout()
@@ -91,10 +102,34 @@ class LoadoutPage(QWidget):
         self._editing_id = ctx.preset_id
         self._populate(ctx.preset)
 
+    @staticmethod
+    def _set_slot_value(combo: QComboBox, value: str) -> None:
+        index = combo.findData(value)
+        if index == -1 and value:
+            index = combo.findText(value)  # e.g. a plain name saved before the "learned" suffix existed
+        if index != -1:
+            combo.setCurrentIndex(index)
+        else:
+            combo.setCurrentIndex(0)
+            combo.setEditText(value)
+
+    @staticmethod
+    def _get_slot_value(combo: QComboBox) -> str:
+        # currentData() can lag behind the visible text (Qt doesn't clear it
+        # just because the user typed over it), so look the live text up
+        # against the item list instead of trusting the index.
+        text = combo.currentText().strip()
+        index = combo.findText(text)
+        if index != -1:
+            data = combo.itemData(index)
+            if data is not None:
+                return data
+        return text
+
     def _populate(self, preset: Preset) -> None:
         self.random_box.setChecked(preset.loadout.random)
-        for slot, edit in self.slot_edits.items():
-            edit.setText(getattr(preset.loadout, slot))
+        for slot, combo in self.slot_edits.items():
+            self._set_slot_value(combo, getattr(preset.loadout, slot))
 
     def _load_selected(self, preset_id: str) -> None:
         if not preset_id:
@@ -112,8 +147,8 @@ class LoadoutPage(QWidget):
             return
         preset = load_preset(path)
         preset.loadout.random = self.random_box.isChecked()
-        for slot, edit in self.slot_edits.items():
-            setattr(preset.loadout, slot, edit.text())
+        for slot, combo in self.slot_edits.items():
+            setattr(preset.loadout, slot, self._get_slot_value(combo))
         from warden.config.loader import save_model
 
         save_model(preset, path)

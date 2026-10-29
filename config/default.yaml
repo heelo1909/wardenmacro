@@ -82,6 +82,15 @@ integrations:
     pin: ""
   toasts: true
 
+# Gumroad storefront-key gate - leave disabled here (dev/source copies never
+# ask for a key). Only a config built for paying customers should set
+# enabled: true and fill in both permalinks - see sales-bot/README.md.
+license:
+  enabled: false
+  pass_permalink: ""
+  lifetime_permalink: ""
+  pass_hours: 24
+
 scheduler:
   stop_at_time: null            # "HH:MM"
   windows: []                   # [{start: "22:00", end: "08:00"}]

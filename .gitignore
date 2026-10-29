@@ -10,3 +10,5 @@ diagnostics/
 unknown/
 recordings/
 logs/
+# sales bot's real config holds admin Discord IDs + live purchase links
+sales-bot/config.json

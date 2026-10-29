@@ -3,7 +3,11 @@ PySide6>=6.7
 pyyaml>=6.0
 pydantic>=2.6
 mss>=9.0
-opencv-python>=4.9
+# headless, not opencv-python - Warden never calls cv2's own GUI/video
+# functions (imshow, VideoCapture, ...), only image-processing/template
+# matching, and headless drops a meaningful chunk of bundled size for that
+# unused GUI/codec weight when packaged with PyInstaller.
+opencv-python-headless>=4.9
 numpy>=1.26
 psutil>=5.9
 pynput>=1.7

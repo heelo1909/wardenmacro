@@ -427,10 +427,12 @@ class _ProgressBar(QFrame):
 
     def __init__(self):
         super().__init__()
+        from warden.gui import theme
+
         self.setFixedHeight(10)
-        self.setStyleSheet(f"background:{'#2A2F37'}; border-radius:5px;")
+        self.setStyleSheet(f"background:{theme.BORDER}; border-radius:5px;")
         self._fill = QFrame(self)
-        self._fill.setStyleSheet(f"background:#F2A93B; border-radius:5px;")
+        self._fill.setStyleSheet(f"background:{theme.GRADIENT_ACCENT}; border-radius:5px;")
         self._target_hours = 1.0
         self._value_hours = 0.0
 

@@ -1,17 +1,33 @@
-"""Warden's own visual identity: graphite surfaces, single amber accent."""
+"""Warden's own visual identity: silver/white surfaces, graphite accent."""
 
 from __future__ import annotations
 
-BG = "#121417"
-CARD = "#1B1E23"
-CARD_HOVER = "#23272E"
-BORDER = "#2A2F37"
-TEXT = "#ECEDEF"
-TEXT_MUTED = "#8B919B"
-ACCENT = "#F2A93B"
-ACCENT_PRESSED = "#D68F25"
-SUCCESS = "#3FB97A"
-ERROR = "#E5534B"
+BG = "#F7F8FA"
+CARD = "#FFFFFF"
+CARD_HOVER = "#EEF0F3"
+BORDER = "#E0E3E8"
+TEXT = "#1A1D21"
+TEXT_MUTED = "#6B7280"
+ACCENT = "#3A3F47"
+ACCENT_PRESSED = "#24282E"
+SUCCESS = "#2F9E5B"
+ERROR = "#D6453F"
+
+# Used only for the calibration marquee (ImageCanvas), drawn over arbitrary
+# game screenshots rather than app chrome - stays a bright, saturated color
+# independent of the main theme so it stays visible against any footage.
+SELECTION = "#00B8D9"
+
+# Subtle linear gradients layered over the flat colors above for a bit of
+# "brushed metal" depth - kept light enough to stay minimalistic rather than
+# glossy. Qt's QSS supports qlineargradient() directly; no images needed.
+GRADIENT_PAGE = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FBFCFD, stop:1 #F3F5F7)"
+GRADIENT_SIDEBAR = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FCFDFD, stop:1 #EDEFF2)"
+GRADIENT_CARD = "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FFFFFF, stop:1 #F5F7F9)"
+GRADIENT_SURFACE = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FFFFFF, stop:1 #EEF0F3)"
+GRADIENT_NAV_CHECKED = "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #F1F2F5, stop:1 #FBFCFD)"
+GRADIENT_ACCENT = "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #4A5058, stop:1 #24282E)"
+GRADIENT_ACCENT_PRESSED = "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #24282E, stop:1 #15171A)"
 
 FONT_STACK = ('"Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", '
               "-apple-system, BlinkMacSystemFont, "
@@ -40,7 +56,7 @@ def stylesheet(scale: float = 1.0) -> str:
         color: {TEXT};
     }}
     QMainWindow, QWidget#Root {{
-        background: {BG};
+        background: {GRADIENT_PAGE};
     }}
     QDialog, QMessageBox {{
         background: {BG};
@@ -50,10 +66,10 @@ def stylesheet(scale: float = 1.0) -> str:
         background: transparent;
     }}
     QScrollArea#PageScroll, QScrollArea#PageScroll > QWidget, QWidget#Page {{
-        background: {BG};
+        background: {GRADIENT_PAGE};
     }}
     QWidget#Sidebar {{
-        background: {BG};
+        background: {GRADIENT_SIDEBAR};
         border-right: {_px(1)}px solid {BORDER};
     }}
     QLabel#Wordmark {{
@@ -76,12 +92,12 @@ def stylesheet(scale: float = 1.0) -> str:
         color: {TEXT};
     }}
     QPushButton#NavButton:checked {{
-        background: {CARD};
+        background: {GRADIENT_NAV_CHECKED};
         color: {TEXT};
         border-left: {_px(3)}px solid {ACCENT};
     }}
     QFrame#Card {{
-        background: {CARD};
+        background: {GRADIENT_CARD};
         border: {_px(1)}px solid {BORDER};
         border-radius: {_px(12)}px;
     }}
@@ -126,13 +142,16 @@ def stylesheet(scale: float = 1.0) -> str:
         color: {ACCENT};
     }}
     QPushButton {{
-        background: {CARD_HOVER};
+        background: {GRADIENT_SURFACE};
         border: {_px(1)}px solid {BORDER};
         border-radius: {_px(8)}px;
         padding: {_px(7)}px {_px(16)}px;
     }}
     QPushButton:hover {{
         border-color: {ACCENT};
+    }}
+    QPushButton:pressed {{
+        background: {CARD_HOVER};
     }}
     QPushButton#CheckItem {{
         border-radius: {_px(14)}px;
@@ -150,13 +169,13 @@ def stylesheet(scale: float = 1.0) -> str:
         color: {ACCENT};
     }}
     QPushButton#Primary {{
-        background: {ACCENT};
+        background: {GRADIENT_ACCENT};
         color: {BG};
         border: none;
         font-weight: 600;
     }}
     QPushButton#Primary:pressed {{
-        background: {ACCENT_PRESSED};
+        background: {GRADIENT_ACCENT_PRESSED};
     }}
     QStatusBar {{
         background: {BG};
@@ -218,7 +237,7 @@ def stylesheet(scale: float = 1.0) -> str:
         background: {BG};
     }}
     QCheckBox::indicator:checked {{
-        background: {ACCENT};
+        background: {GRADIENT_ACCENT};
         border-color: {ACCENT};
     }}
     QScrollArea {{
