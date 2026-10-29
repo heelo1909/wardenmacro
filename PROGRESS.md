@@ -2,6 +2,10 @@
 
 ## Current phase
 
+**Mac port (warden-mac-handoff.md): Phases 0-4 built (2026-10-29), waiting on the
+Phase 4 user test** - push, tag `v0.0.1-mactest`, confirm the workflow is green and both
+DMGs are on the pre-release. Details: "Mac port" section below.
+
 **Phase 9 — Packaging & docs: COMPLETE. All 10 phases (0–9) are now built.**
 
 Ran autonomously through every phase per HANDOFF.md section 0's original
@@ -615,6 +619,113 @@ permalinks are filled in so a distributed build actually contains this gate. The
 itself was updated in place to reflect Phase 1 being built, rather than left saying "pending
 approval."
 
+## Mac port (warden-mac-handoff.md): Phases 0-4 built, 2026-10-29
+
+Built in a Cowork session (Linux sandbox, no Mac, no push access), so the work stops
+at Phase 4's user step: **push the code and a test tag, then check the workflow.**
+Phase 5 (real-Mac test) is untouched.
+
+### Phase 0: inventory (every Windows-only call, and where macOS stands)
+
+| File:line | Windows-only call | macOS status |
+|---|---|---|
+| platform/input.py:71-139 | `SendInputMethod` (ctypes `user32.SendInput`, scan codes) | **New:** `platform/input_mac.py` `QuartzMethod` (CGEvent) + `MAC_KEYCODES`; tried first on darwin via `effective_order()` |
+| platform/input.py:145-170 | `pydirectinput` | Windows-only, self-disqualifies; pynput stays the Mac fallback |
+| platform/window.py:137-280 | `Win32Windows` (EnumWindows, GetClientRect, GetForegroundWindow, SetForegroundWindow + Alt-tap + AttachThreadInput, PostMessage WM_CLOSE) | `platform/window_mac.py` `MacWindows` (existed). **New:** title bar trimmed in windowed mode, display list + Retina scale |
+| core/tick.py:338 | **`Win32Windows()` hardcoded in `TickLoop`** | **Bug, fixed:** now `make_window_backend()`. Before this, Start raised OSError on any Mac |
+| platform/dpi.py:21-120 | DPI awareness, GetDpiForWindow, EnumDisplayMonitors | Returns "n/a"/1.0 off Windows (unchanged). Mac scale lives in **new** `platform/retina.py` |
+| vision/capture.py:69-140 | `PrintWindow` + GDI | `_quartz_capture` (existed). **New:** clips to the content rect; screen-fallback frames also scaled to points |
+| platform/power.py:39,71 | `SetThreadExecutionState` | `caffeinate` (existed) |
+| core/scheduler.py:129 | `powrprof.SetSuspendState` / `shutdown` | `pmset sleepnow` / osascript (existed) |
+| platform/process.py:52 | `os.startfile` | `open` (existed); process `robloxplayer` (existed, unverified) |
+| integrations/toast.py:42 | `winotify` | osascript notification (existed) |
+| paths.py:34 | `%LOCALAPPDATA%` | `~/Library/Application Support/Warden` (existed) |
+| vision/ocr.py:17-18 | Tesseract `C:\Program Files\...` paths | **New:** OCR off by default on Mac (`mac.ocr`) |
+| platform/hotkeys.py | pynput `GlobalHotKeys`, F6-F9 | **New:** Mac uses a key-code matcher (`ComboMatcher`) and Ctrl+Shift letter defaults |
+| platform/window.py:37 | updater names `robloxplayerlauncher.exe` / `robloxplayerinstaller.exe` | **Gap:** no Mac updater name known; verify in Phase 5 |
+| warden.spec | `.exe` one-folder | `BUNDLE()` existed. **New:** icon, `com.heelo1909.warden`, version, plist |
+
+**Interface decision:** the handoff proposed a new `platform/` interface. The repo already
+had the seams it describes (`WindowBackend` + `make_window_backend()`, the `InputMethod`
+fallback chain, the swappable `Capturer`, `SleepGuard`, `power_action`). Phase 1 therefore
+moved nothing; it routed the one place that bypassed a seam (`TickLoop`) through it.
+Windows code paths are byte-for-byte the same apart from that line, which still returns
+`Win32Windows()` on Windows.
+
+### Phase 1: platform interface (no Windows behavior change)
+- `core/tick.py`: `make_window_backend()` instead of `Win32Windows()`.
+- Proof: the full suite has the same 40 environment-only failures as before
+  (Linux sandbox: no Win32, no X display for pynput) and **no new ones**. With a fake
+  window backend + fake input method injected, all 58 TickLoop/MainWindow/GUI tests
+  that normally need Windows pass here too.
+
+### Phase 2: Mac backend
+- `platform/input_mac.py`: `QuartzMethod` (move/drag with delta fields for camera look,
+  left/right/middle buttons, keys with held-modifier flags, wheel) and `MAC_KEYCODES`
+  (every key in `SCAN_CODES`, unique codes). `InputConfig.methods` accepts `"quartz"`.
+- `platform/retina.py`: backing scale, pixel <-> point, display lookup, fullscreen
+  detection, title-bar trim. Decision: **frames on Mac are always in points** (Retina
+  captures are scaled down), so click math is 1:1 with the window rect. Templates already
+  rescale by frame height (`ref_height`), so detection is resolution-independent.
+- `platform/window_mac.py`: `displays()`; windowed Roblox gets `mac.title_bar_pt` (28)
+  trimmed; fullscreen untouched; unknown display list = nothing trimmed (old behavior).
+- `vision/capture.py`: Quartz capture passes the content rect, so the title bar is never
+  in the frame; `to_point_size()` used by both capture paths.
+
+### Phase 3: Mac setup screen and defaults
+- `platform/permissions_mac.py`: Accessibility (`AXIsProcessTrusted`, prompt via
+  `AXIsProcessTrustedWithOptions`), Screen Recording (`CGPreflightScreenCaptureAccess` /
+  `CGRequestScreenCaptureAccess`), Input Monitoring (`IOHIDCheckAccess` /
+  `IOHIDRequestAccess`) through ctypes, plus System Settings deep links and
+  `relaunch_command()`. Read-only checks; nothing is changed on the user's behalf.
+- `gui/pages/mac_setup.py`: one row per permission (one-sentence reason, green tick when
+  allowed, Open System Settings, written steps if the link fails), Check again, Reopen
+  Warden (shown after Screen Recording is opened/granted, since macOS re-reads it only on
+  launch), 2 s auto-recheck. `MainWindow` adds the page on darwin only and opens on it
+  while anything is missing (`mac.show_setup_on_launch`).
+- First run on a Mac (`config/loader.py`): hotkeys Ctrl+Shift+S/P/X/K, input
+  `[quartz, pynput]`, `estimate.ocr_verify: false`. Windows seeding is still a plain copy.
+- `platform/macos.py: configure()` applies `mac.title_bar_pt` / `mac.ocr` at startup;
+  no-op elsewhere. New `mac:` config section (defaults only, `default.yaml` unchanged).
+- Screenshot: not possible here (no Mac); the page is covered by offscreen Qt tests.
+
+### Phase 4: packaging and CI
+- `warden --selftest` (`tools/selftest.py`): imports, bundled config + presets validate,
+  templates present, first-run seed in a temp folder; on Mac also Quartz/AppKit, the
+  three permission checks (read-only) and `QuartzMethod` construction. Exit 0/1.
+- `warden.spec`: `com.heelo1909.warden`, version from `warden/__init__.py`,
+  `assets/warden.icns` (original placeholder icon), `LSMinimumSystemVersion` 13.0,
+  `NSAppleEventsUsageDescription`. Windows branch untouched (still `icon=None`).
+- `scripts/mac/build_dmg.sh`: verify/ad-hoc sign, `hdiutil create -volname "Warden"
+  -srcfolder <staging> -ov -format UDZO`, Applications link, `hdiutil verify`, sha256.
+- `.github/workflows/mac-release.yml`: on `v*` tags (and manual runs), `macos-15`
+  (arm64) + `macos-15-intel` (best-effort), Python 3.12, Mac tests (blocking), full
+  suite (report only), selftest from source, PyInstaller, arch check, selftest of the
+  built app, DMG, selftest from inside the mounted DMG, then a release job that creates
+  the release (pre-release if the tag has a dash) and uploads the DMGs with the built-in
+  `GITHUB_TOKEN`. No other secrets.
+- Tests: `tests/test_mac_port.py`, 68 tests, all passing here. Suite: 515 tests, same 40
+  environment-only failures as before.
+
+### Known issues / risks for Phase 5
+- **Corner emergency stop isn't wired on either OS.** `CornerWatch` exists in
+  `platform/input.py` but nothing starts it, even though the README describes it. The
+  stop hotkey works. Not changed here (it would change Windows behavior); decide first.
+- `CGWindowListCreateImage` is marked obsolete in the macOS 15 SDK. It still exists at
+  runtime and `mss` uses it too, but there are reports of macOS 26 returning only the
+  desktop. If captures come back blank on a real Mac, the fix is ScreenCaptureKit.
+- Hotkeys on Mac are new code (`ComboMatcher`); verify they fire with Roblox focused.
+- Roblox's Mac process name (`RobloxPlayer`) and updater name are unverified.
+- Title bar height (28 pt) is the standard macOS value; adjust `mac.title_bar_pt` if
+  clicks are off by a strip in windowed mode.
+- Qt needs macOS 13+ in current releases, hence the 13.0 minimum.
+- Full-suite tests that assume Windows process names will fail on the Mac runner (report
+  only); the Mac-specific tests block the build.
+- Every update has a new ad-hoc signature, so macOS may ask for the permissions again.
+- The Windows `.bat` launchers had been deleted in the uncommitted working tree; they were
+  restored from git (`Run Warden.bat`, `Rebuild Warden.exe.bat`). Delete them again if that
+  was intended.
+
 ## ALL PHASES COMPLETE (0 through 9)
 
 What's left, for the user:
@@ -740,6 +851,12 @@ since you may want to try it earlier.
   matches in play, and recalibrate from the Calibration page if it doesn't.
 
 ## Exact next step
+
+**Mac port:** the user pushes this code and the tag `v0.0.1-mactest`, then checks the
+Actions run and the Releases page (Phase 4 user test in warden-mac-handoff.md). On a
+green run, Phase 5: the real-Mac checklist on a personally owned Mac.
+
+Windows (unchanged from before):
 
 **None - all 10 phases are built.** The only things left are the two user-facing items
 listed just above ("ALL PHASES COMPLETE"): run Calibration against your own screen, then

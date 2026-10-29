@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,6 +104,20 @@ def user_presets_dir() -> Path:
     return paths.data_home() / "presets"
 
 
+def _apply_mac_first_run_defaults(path: Path) -> None:
+    """First run on a Mac only: Mac hotkeys, Quartz input, OCR off (see platform/macos.py).
+
+    Rewrites the freshly seeded copy (comments are lost in that copy only;
+    the bundled default.yaml and every Windows install are untouched).
+    """
+    from warden.platform.macos import mac_first_run_defaults
+
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    data = mac_first_run_defaults(data)
+    Path(path).write_text("# Warden settings (macOS defaults applied on first run)\n"
+                          + yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
 def seed_user_config() -> None:
     """First run: copy bundled defaults into the user data folder. Never overwrites."""
     home = paths.data_home()
@@ -110,6 +125,8 @@ def seed_user_config() -> None:
     bundled = paths.bundled_config_dir()
     if not user_config_path().exists():
         shutil.copyfile(bundled / "default.yaml", user_config_path())
+        if sys.platform == "darwin":
+            _apply_mac_first_run_defaults(user_config_path())
     presets = user_presets_dir()
     presets.mkdir(exist_ok=True)
     for src in (bundled / "presets").glob("*.yaml"):

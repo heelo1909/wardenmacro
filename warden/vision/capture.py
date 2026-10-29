@@ -145,7 +145,7 @@ class WindowCapturer:
                 gdi32.DeleteDC(mem)
             user32.ReleaseDC(hwnd, hdc)
 
-    def _quartz_capture(self, hwnd: int, width: int, height: int) -> np.ndarray | None:
+    def _quartz_capture(self, hwnd: int, width: int, height: int, rect: Rect | None = None) -> np.ndarray | None:
         """macOS equivalent of ``_print_window``: ``CGWindowListCreateImage``
         rasterizes a window by its id regardless of what's on top of it or
         whether it's covered - same "capture by handle, not by screen region"
@@ -161,8 +161,16 @@ class WindowCapturer:
             import Quartz
         except ImportError:
             return None
+        # With a window id plus kCGWindowListOptionIncludingWindow, the screen
+        # rect only *clips* that one window's image - so passing the content
+        # rect (title bar already trimmed by MacWindows) captures just the game
+        # area, still unaffected by anything stacked on top. CGRectNull = the
+        # whole window frame (used when no rect is known).
+        bounds = Quartz.CGRectNull
+        if rect is not None and not rect.is_empty():
+            bounds = Quartz.CGRectMake(rect.left, rect.top, rect.width, rect.height)
         image = Quartz.CGWindowListCreateImage(
-            Quartz.CGRectNull,  # ignored: a specific window id is given below instead of a screen region
+            bounds,
             Quartz.kCGWindowListOptionIncludingWindow,
             hwnd,
             Quartz.kCGWindowImageBoundsIgnoreFraming | Quartz.kCGWindowImageBestResolution,
@@ -177,14 +185,33 @@ class WindowCapturer:
             if sys.platform == "win32":
                 frame = self._print_window(self.hwnd, rect.width, rect.height)
             elif sys.platform == "darwin":
-                frame = self._quartz_capture(self.hwnd, rect.width, rect.height)
+                frame = self._quartz_capture(self.hwnd, rect.width, rect.height, rect)
         except Exception:
             frame = None
         if frame is not None:
             self.last_method = "window"
             return frame
         self.last_method = "screen"
-        return self.fallback.grab(rect)
+        frame = self.fallback.grab(rect)
+        if sys.platform == "darwin":
+            frame = to_point_size(frame, rect.width, rect.height)
+        return frame
+
+
+def to_point_size(frame: np.ndarray, want_w: int, want_h: int) -> np.ndarray:
+    """macOS: a Retina capture (pixels, 2x) scaled down to the window's size in
+    points, so every frame Warden sees on a Mac is in the same units as the
+    window rect and click coordinates, whichever capture path produced it.
+    A frame already at point size (scale 1) is returned untouched.
+    """
+    if frame is None or want_w <= 0 or want_h <= 0:
+        return frame
+    h, w = frame.shape[:2]
+    if (w, h) == (want_w, want_h):
+        return frame
+    import cv2
+
+    return cv2.resize(frame, (want_w, want_h), interpolation=cv2.INTER_AREA)
 
 
 def _cgimage_to_bgr(quartz, image, want_w: int, want_h: int) -> np.ndarray | None:
@@ -209,11 +236,8 @@ def _cgimage_to_bgr(quartz, image, want_w: int, want_h: int) -> np.ndarray | Non
     # last channel" slice applies. If real hardware ever shows swapped red/
     # blue, flip this to [:, :, [2, 1, 0]] instead.
     frame = np.ascontiguousarray(arr[:, :, :3])
-    if (px_w, px_h) != (want_w, want_h):
-        # Retina displays return pixels at up to 2x the window's point size.
-        import cv2
-
-        frame = cv2.resize(frame, (want_w, want_h), interpolation=cv2.INTER_AREA)
+    # Retina displays return pixels at up to 2x the window's point size.
+    frame = to_point_size(frame, want_w, want_h)
     if not frame.any():
         return None
     return frame

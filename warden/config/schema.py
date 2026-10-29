@@ -177,7 +177,8 @@ class Timings(_Model):
 
 
 class InputConfig(_Model):
-    methods: list[Literal["sendinput", "pydirectinput", "pynput"]] = ["sendinput", "pydirectinput", "pynput"]
+    # "quartz" is the macOS CGEvent method; on a Mac it is tried first automatically.
+    methods: list[Literal["sendinput", "pydirectinput", "pynput", "quartz"]] = ["sendinput", "pydirectinput", "pynput"]
     jiggle_px: Annotated[int, Field(ge=0, le=50)] = 3
     key_hold_ms: tuple[int, int] = (40, 110)
     emergency_corner_px: Annotated[int, Field(ge=1, le=50)] = 5
@@ -357,6 +358,19 @@ class GuiConfig(_Model):
     minimize_on_start: bool = True
 
 
+class MacConfig(_Model):
+    """macOS-only settings. Ignored on Windows."""
+
+    # Quartz reports a window's frame including its title bar; this many points
+    # are trimmed off the top in windowed mode (fullscreen has no title bar).
+    title_bar_pt: Annotated[int, Field(ge=0, le=80)] = 28
+    # OCR needs the Tesseract binary, which Mac users can't install without
+    # Terminal - off by default; every OCR feature already degrades to "no text".
+    ocr: bool = False
+    # Show the Mac setup (permissions) screen at launch while anything is missing.
+    show_setup_on_launch: bool = True
+
+
 class ContractEstimate(_Model):
     count_lobby_time: bool = False  # unconfirmed whether the game credits lobby time
     ocr_verify: bool = True
@@ -384,6 +398,7 @@ class AppConfig(_Model):
     license: LicenseConfig = Field(default_factory=LicenseConfig)
     scheduler: Scheduler = Field(default_factory=Scheduler)
     gui: GuiConfig = Field(default_factory=GuiConfig)
+    mac: MacConfig = Field(default_factory=MacConfig)
     estimate: ContractEstimate = Field(default_factory=ContractEstimate)
     owned_weapons: OwnedWeapons = Field(default_factory=OwnedWeapons)
     weapon_templates_dir: str = "templates/weapons"

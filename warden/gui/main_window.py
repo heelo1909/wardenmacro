@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
@@ -39,6 +40,7 @@ from warden.platform.hotkeys import Hotkeys
 log = logging.getLogger(__name__)
 
 PAGES = ("Home", "Loadout", "Settings", "Calibration", "History", "Diagnostics")
+MAC_SETUP_PAGE = "Mac setup"  # extra sidebar page, macOS only
 
 # The layout is designed at this size; smaller windows scale fonts/spacing
 # down (never below MIN_SCALE) and anything that still doesn't fit scrolls.
@@ -71,9 +73,13 @@ class MainWindow(QMainWindow):
     # touched from the GUI thread, so hotkeys go through this queued signal.
     hotkey_pressed = Signal(str)
 
-    def __init__(self, config: LoadedConfig | None = None, bus=None):
+    def __init__(self, config: LoadedConfig | None = None, bus=None,
+                 mac_setup: bool | None = None, permission_checker=None):
         super().__init__()
         self.config = config
+        # macOS gets a "Mac setup" page; Windows never builds or imports it.
+        self.mac_setup = (sys.platform == "darwin") if mac_setup is None else mac_setup
+        self.page_names = PAGES + ((MAC_SETUP_PAGE,) if self.mac_setup and config is not None else ())
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.setMinimumSize(560, 400)
         self._fit_to_screen()
@@ -119,6 +125,10 @@ class MainWindow(QMainWindow):
                 "History": HistoryPage(self.ctx),
                 "Diagnostics": DiagnosticsPage(self.ctx),
             }
+            if MAC_SETUP_PAGE in self.page_names:
+                from warden.gui.pages.mac_setup import MacSetupPage
+
+                pages[MAC_SETUP_PAGE] = MacSetupPage(permission_checker)
             self.home_page: HomePage | None = pages["Home"]
             self._event_bridge = BusBridge(self.ctx.bus, min_level="info")
             self._event_bridge.event.connect(self._on_bus_event)
@@ -127,7 +137,7 @@ class MainWindow(QMainWindow):
             pages = {name: _placeholder_page(name) for name in PAGES}
             self.home_page = None
 
-        for index, name in enumerate(PAGES):
+        for index, name in enumerate(self.page_names):
             button = QPushButton(name, objectName="NavButton", checkable=True)
             button.setCursor(Qt.PointingHandCursor)
             self.nav.addButton(button, index)
@@ -137,6 +147,7 @@ class MainWindow(QMainWindow):
         self.nav.idClicked.connect(self._on_nav_clicked)
         self.nav.button(0).setChecked(True)
         side.addStretch(1)
+        self._maybe_open_mac_setup()
 
         row.addWidget(sidebar)
         row.addWidget(self.stack, 1)
@@ -152,6 +163,16 @@ class MainWindow(QMainWindow):
 
         if config is not None:
             self._setup_hotkeys()
+
+    def _maybe_open_mac_setup(self) -> None:
+        """First thing a Mac user sees while any permission is still missing."""
+        page = self.pages.get(MAC_SETUP_PAGE) if hasattr(self, "pages") else None
+        if page is None or self.config is None or not self.config.app.mac.show_setup_on_launch:
+            return
+        if not page.all_granted():
+            index = self.page_names.index(MAC_SETUP_PAGE)
+            self.stack.setCurrentIndex(index)
+            self.nav.button(index).setChecked(True)
 
     # -- responsive scaling -------------------------------------------------------
 
@@ -214,7 +235,7 @@ class MainWindow(QMainWindow):
     def _on_nav_clicked(self, index: int) -> None:
         self.stack.setCurrentIndex(index)
         history = self.pages.get("History") if hasattr(self, "pages") else None
-        if PAGES[index] == "History" and hasattr(history, "refresh_sessions"):
+        if self.page_names[index] == "History" and hasattr(history, "refresh_sessions"):
             history.refresh_sessions()
 
     # -- session control (also reachable via hotkeys) -------------------------------------------------------

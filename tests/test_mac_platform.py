@@ -144,7 +144,11 @@ class FakeQuartz:
             return [w for w in self.windows if w.get("kCGWindowIsOnscreen")]
         return list(self.windows)
 
-    def CGWindowListCreateImage(self, _rect, _option, window_id, _flags):
+    def CGRectMake(self, x, y, w, h):
+        return (x, y, w, h)
+
+    def CGWindowListCreateImage(self, rect, _option, window_id, _flags):
+        self.last_capture_rect = rect
         return self.images.get(window_id)
 
     def CGEventCreate(self, _source):

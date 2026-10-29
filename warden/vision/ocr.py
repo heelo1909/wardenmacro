@@ -19,8 +19,21 @@ _COMMON_PATHS = (
 )
 
 
-@lru_cache(maxsize=1)
+_enabled = True  # macOS turns this off at startup unless config mac.ocr is on
+
+
+def set_enabled(on: bool) -> None:
+    """Switch OCR on/off for this process (``platform.macos.configure`` calls it on a Mac)."""
+    global _enabled
+    _enabled = bool(on)
+
+
 def _engine():
+    return _find_engine() if _enabled else None
+
+
+@lru_cache(maxsize=1)
+def _find_engine():
     try:
         import pytesseract
     except ImportError:

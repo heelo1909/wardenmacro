@@ -1,5 +1,7 @@
 """Game input: SendInput scan codes first, then pydirectinput, then pynput.
 
+(macOS: Quartz CGEvents first - ``platform/input_mac.py`` - then pynput.)
+
 ``InputController`` is the only thing the rest of Warden talks to. It
 enforces the focus gate, observe-only mode and the emergency stop, and does
 the jiggle-then-click sequence Roblox needs to register clicks.
@@ -205,8 +207,30 @@ class PynputMethod:
         self._m.scroll(0, notches)
 
 
+def _quartz_method():
+    from warden.platform.input_mac import QuartzMethod  # macOS only; imports pyobjc lazily
+
+    return QuartzMethod()
+
+
+def effective_order(order: list[str], platform: str | None = None) -> list[str]:
+    """The method order actually tried on this OS.
+
+    On macOS, Quartz CGEvents go first even if an older config.yaml (seeded
+    before the Mac port) doesn't list "quartz" - pynput stays as the fallback.
+    Every other OS gets ``order`` back unchanged, so Windows behaves exactly
+    as before.
+    """
+    platform = platform or sys.platform
+    if platform == "darwin" and "quartz" not in order:
+        return ["quartz", *order]
+    return list(order)
+
+
 def build_methods(order: list[str]) -> list[InputMethod]:
-    factories = {"sendinput": SendInputMethod, "pydirectinput": PyDirectInputMethod, "pynput": PynputMethod}
+    factories = {"sendinput": SendInputMethod, "pydirectinput": PyDirectInputMethod, "pynput": PynputMethod,
+                 "quartz": _quartz_method}
+    order = effective_order(order)
     methods: list[InputMethod] = []
     for name in order:
         try:

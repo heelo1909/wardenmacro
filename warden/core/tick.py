@@ -32,7 +32,7 @@ from warden.platform import dpi
 from warden.platform.power import SleepGuard
 from warden.platform.input import InputController, build_methods
 from warden.platform.process import Launcher, RobloxProcess
-from warden.platform.window import FocusGate, Win32Windows, pick_client, pick_updater
+from warden.platform.window import FocusGate, Win32Windows, make_window_backend, pick_client, pick_updater
 from warden.vision.capture import MssCapturer, WindowCapturer
 from warden.vision.detectors import Detection, FrozenDetector, WindowStateDetector, build_detectors
 from warden.vision.templates import TemplateLibrary
@@ -335,7 +335,9 @@ class TickLoop:
         self.bus = bus
         dpi.ensure_dpi_awareness()
 
-        self.window_backend = Win32Windows()
+        # Win32Windows on Windows (unchanged), MacWindows on macOS. This used to
+        # hardcode Win32Windows(), which raised on a Mac before the loop started.
+        self.window_backend = make_window_backend()
         self.focus_gate = FocusGate(self.window_backend)
         # Window capture: whatever is on top of Roblox (Warden itself, chat
         # apps) never ends up in the frame; falls back to a screen grab.

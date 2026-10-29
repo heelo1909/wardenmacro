@@ -17,10 +17,10 @@ section 1 for the clean-room rules this project follows.
 
 ## Install
 
-**Requirements:** Windows 10/11 or macOS 11+, Python 3.12+ (built and tested on
+**Requirements:** Windows 10/11 or macOS 13+ (Mac users: see **Mac** below for the no-Terminal download), Python 3.12+ (built and tested on
 3.12/3.14), a 64-bit Python install. Everything in this README applies to both —
 the only differences are the shell commands below and where things like logs and
-config end up on disk, covered in **macOS notes** further down.
+config end up on disk, covered in the **Mac** section further down.
 
 ```bash
 python -m venv .venv
@@ -43,25 +43,44 @@ path in this README has a matching folder in that same macOS location). Edit tho
 (or use the Settings/Loadout pages) — the files in this repo's `config/` folder are
 only the shipped defaults and are never modified by the running app.
 
-### macOS notes
+### Mac (download, no Terminal needed)
 
-- **First run:** double-click `Run Warden (Mac).command`. It creates its own
-  `.venv` and installs dependencies the first time, then just launches Warden on
-  every run after that.
-- **Permissions (required):** macOS will not let Warden see or control Roblox until
-  you grant two permissions, in **System Settings → Privacy & Security**:
-  **Screen Recording** (to capture the Roblox window) and **Accessibility** (to send
-  clicks/keys). Grant them to **Terminal** when running from source, or to
-  **Warden.app** if you built the packaged app. Without these, Warden doesn't
-  crash or error — it just silently sees nothing and clicks nothing, so this is the
-  first thing to check if Start doesn't seem to do anything.
-- **Windowed vs. fullscreen Roblox:** macOS reports a window's position/size
-  including its title bar, where Windows reports only the game content area. Warden
-  accounts for most of this automatically, but if clicks land slightly off, playing
-  RIVALS in **fullscreen** removes the title bar entirely and avoids the difference.
-- Everything else — calibration, presets, Discord/LAN integrations, troubleshooting
-  — works identically to Windows; just mentally swap in the macOS data folder path
-  above wherever this README says `%LOCALAPPDATA%\Warden`.
+Works on personally owned Macs running macOS 13 Ventura or newer.
+
+1. Download from this repo's **Releases** page: `Warden-mac-arm64.dmg` for Apple
+   Silicon Macs (M1 or newer), or `Warden-mac-x86_64.dmg` for older Intel Macs if one
+   is offered. To check which you have, open the Apple menu → **About This Mac** and
+   look at **Chip** (Apple M-something = Apple Silicon; Intel = Intel).
+2. Open the DMG and drag **Warden** into **Applications**.
+3. The first time you open it, macOS may say it can't verify the app (Warden isn't
+   notarized by Apple). Open **System Settings → Privacy & Security**, scroll down,
+   and click **Open Anyway**. (On some macOS versions, right-click → **Open** also works.)
+4. Follow Warden's **Mac setup** screen to allow **Accessibility** (clicks and keys),
+   **Screen Recording** (seeing the game) and **Input Monitoring** (hotkeys), and
+   reopen Warden when it asks.
+5. **School and work Macs** usually block this kind of app through device management
+   and **aren't supported**. Warden doesn't try to get around that.
+
+Mac notes:
+
+- **Hotkeys:** Mac keyboards need Fn for F6–F9, so a new Mac install starts with
+  **Ctrl+Shift+S** (start), **Ctrl+Shift+P** (pause), **Ctrl+Shift+X** (stop) and
+  **Ctrl+Shift+K** (screenshot). Change them on the Settings page.
+- **OCR is off on Mac** (installing Tesseract needs Terminal). The few features that
+  use it (idle-warning text, disconnect error codes, contract progress verification)
+  just stay off; everything else works.
+- **Updates may ask for permissions again.** macOS ties these permissions to the app's
+  signature, and each build has a new (ad-hoc) one. If Warden stops seeing or clicking
+  after an update, open the Mac setup page and allow them again.
+- **Windowed vs. fullscreen Roblox:** Warden trims the title bar off a windowed Roblox
+  window automatically (`mac.title_bar_pt` in config.yaml, default 28). If clicks
+  land slightly off, play RIVALS in **fullscreen**.
+- **Running from source instead** (developers): double-click `Run Warden (Mac).command`.
+  It makes its own `.venv` the first time. Permissions then belong to **Terminal**,
+  not Warden.app.
+- Everything else (calibration, presets, Discord/LAN integrations, troubleshooting)
+  works the same as on Windows; swap in `~/Library/Application Support/Warden`
+  wherever this README says `%LOCALAPPDATA%\Warden`.
 
 ### Optional: Tesseract OCR
 
@@ -245,15 +264,21 @@ pause/resume/stop require it.
   `%LOCALAPPDATA%\Warden\diagnostics\` and `...\unknown\`.
 - **Something looks stuck mid-session:** the emergency stop is holding the mouse in
   the screen's top-left 5×5px corner for 0.3s, or the configured stop hotkey
-  (default **F8**).
+  (default **F8**; **Ctrl+Shift+X** on a Mac).
 - **On macOS, nothing seems to happen at all:** this is almost always the Screen
-  Recording / Accessibility permissions — see **macOS notes** under Install. The
+  Recording / Accessibility permissions — open the **Mac setup** page. The
   Diagnostics page's new "macOS permissions" section repeats this reminder whenever
   it can't find the Roblox window.
 
 ---
 
 ## Packaging (build your own .exe / .app)
+
+**Mac builds are made by GitHub, not by hand:** pushing a version tag (for example
+`v0.2.0`) runs `.github/workflows/mac-release.yml` on GitHub's macOS machines, which
+tests, builds `Warden.app`, wraps it in `Warden-mac-<arch>.dmg`, self-checks it, and
+attaches it to that tag's GitHub Release. A tag with a dash (`v0.0.1-mactest`) makes
+a pre-release. The Windows build below is separate and unchanged.
 
 ```bash
 pip install -e ".[dev]"

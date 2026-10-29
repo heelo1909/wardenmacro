@@ -2,6 +2,7 @@
 
 Options:
   --check-config [PATH]   validate config (default: user config) and exit
+  --selftest              check imports/config/platform bindings (no Roblox, no window) and exit
 """
 
 from __future__ import annotations
@@ -24,7 +25,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="warden", description=f"{APP_NAME} session runner")
     parser.add_argument("--check-config", nargs="?", const="", metavar="PATH",
                         help="validate config.yaml (and its active preset) then exit")
+    parser.add_argument("--selftest", action="store_true",
+                        help="check that this build's modules, config and platform bindings load, then exit")
     parser.add_argument("--version", action="version", version=f"{APP_NAME} {__version__}")
+    if argv is None and sys.platform == "darwin":
+        # Finder can pass a "-psn_0_12345" process serial number to .app bundles.
+        argv = [a for a in sys.argv[1:] if not a.startswith("-psn_")]
     return parser.parse_args(argv)
 
 
@@ -75,10 +81,20 @@ def _ensure_licensed(license_config: LicenseConfig) -> bool:
         QMessageBox.warning(None, f"{APP_NAME} - License", result.message)
 
 
+def _print_safely(text: str) -> None:
+    """A windowed (no-console) build can have ``sys.stdout`` set to None."""
+    if sys.stdout is not None:
+        print(text, flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     if args.check_config is not None:
         return check_config(args.check_config)
+    if args.selftest:
+        from warden.tools import selftest
+
+        return selftest.run(emit=_print_safely)
 
     log_file = setup_logging()
     bridge_bus_to_logging(bus())
@@ -105,6 +121,10 @@ def main(argv: list[str] | None = None) -> int:
         QMessageBox.critical(None, f"{APP_NAME} - config problem",
                              f"{exc}\n\nFix the file above (or delete it to restore defaults) and restart.")
         return 2
+
+    from warden.platform import macos
+
+    macos.configure(config.app)  # no-op on Windows
 
     if not _ensure_licensed(config.app.license):
         logging.getLogger(__name__).info("license check cancelled by user at startup; exiting")
