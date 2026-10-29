@@ -4,10 +4,10 @@ Read only "Current status" at the start of a prompt (CLAUDE.md). Keep these head
 `scripts/progress_view.py` and the Stop hook read them.
 
 ## Current status
-- **Next stage:** B-001 (finish) — local smoke needs `httpx2`, then merge `b-001-qt-teardown` and re-tag (needs the user)
+- **Next stage:** B-002 — make the 13 Windows-only tests skip/fake on a Mac so smoke can pass on a Mac
 - **Last stage:** B-001 — Mac CI crash on Qt teardown — PARTIAL 2026-10-29
 - **Smoke:** see STATUS.md (generated)
-- **Waiting on the user:** allow installing `httpx2` into `.venv` (smoke), then OK merging and the release tag
+- **Waiting on the user:** nothing (v0.1.1 release build running)
 - **Live tests needed:** M5a, M5b (real Mac), L1 (Windows recovery)
 
 ## Stages
@@ -17,6 +17,7 @@ Mirror of HANDOFF.md §10 "Stages". Tick in both places.
 - [x] H0 — Stage harness and DMG-only Mac launch
 - [ ] M4U — First Mac CI run (needs the user)
 - [ ] B-001 — Mac CI crashes on Qt teardown after tests pass
+- [ ] B-002 — 13 Windows-only tests fail on a Mac (test_power, test_window, test_hotkeys, 2 GUI build tests)
 - [ ] M5a — Real-Mac checklist steps 1–4 (needs the user)
 - [ ] M5b — Real-Mac checklist steps 5–10 (needs the user)
 - [ ] M5c — Fix M5 findings, release v0.2.0
@@ -46,7 +47,8 @@ Newest first. Copy the template for each stage.
 - Smoke test: FAIL (all 10 checks ok; pytest collection error in tests/test_integrations_lan_dashboard.py: latest starlette's TestClient needs `httpx2`, not installed in the new local `.venv`; installing it was not permitted this session)
 - Verifier: not run (smoke not passing)
 - Decisions: B1
-- Needs the user: allow `httpx2` install (or add it to requirements.txt), OK merge + tag
+- Needs the user: none
+- Update 13:30: `httpx2` installed (user OK). Smoke still FAIL: 13 Windows-only tests fail on a Mac, the same 13 fail on `main` without this change (not caused by B-001). User chose to release first ("just launch the dmg first the smoke tests can wait"): merged to `main` and tagged `v0.1.1`. Decision B2.
 
 ### H0 — Stage harness and DMG-only Mac launch
 - Date: 2026-10-29 11:33–12:50 (Cowork session, Linux sandbox)
@@ -76,6 +78,7 @@ Newest first. Copy the template for each stage.
 - **B-001:** green "Mac release" run on the release tag (CI only).
 
 ## Decisions
+- **B2 (2026-10-29):** User override: merge B-001 and release `v0.1.1` with local Mac smoke failing on 13 pre-existing Windows-only tests (CI's required Mac tests are green). Fixing those is B-002. `known_env_failures.json` was not touched.
 - **B1 (2026-10-29):** Mac CI crash (BUG-001) fixed in the test harness, not the app: pytest now closes/deletes leftover widgets and calls `QApplication.shutdown()` at session end. Root cause: Python's interpreter shutdown destroyed the `QApplication` before leftover widgets; macOS 15 runners crash on that ("shared QObject was deleted directly", bus error/segfault). Only confirmable on GitHub's runners: branch run 40917054897 green.
 - **H1 (2026-10-29):** The DMG is the only supported way to run Warden on a Mac. The `.command` launchers were removed: they needed Python and opened Terminal, which the user can't use. Developers can still run from source by hand.
 - **H2:** Single component, so `smoke_checks/` lives at the repo root (the harness template had one per component).

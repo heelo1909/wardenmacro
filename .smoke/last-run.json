@@ -1,65 +1,65 @@
 {
   "result": "FAIL",
   "quick": false,
-  "started_at": "2026-10-29T17:00:28+00:00",
-  "finished_at": "2026-10-29T17:00:31+00:00",
+  "started_at": "2026-10-29T17:20:26+00:00",
+  "finished_at": "2026-10-29T17:24:01+00:00",
   "platform": "darwin",
   "python": "3.12.13",
-  "git_head": "e6d23c6bc4abb25517fad7f1c3bcffbca6dbbeea",
+  "git_head": "864620a12b35977248d06f49a8359a558ed370d7",
   "code_fingerprint": "71d417b38baf91e89e15a99f831881e2a78b5b47b12d810c0fbcd27446289673",
   "checks": [
     {
       "name": "b_001_qt_teardown.py",
       "ok": true,
-      "seconds": 0.2,
+      "seconds": 0.9,
       "output": ""
     },
     {
       "name": "h0_dmg_only.py",
       "ok": true,
-      "seconds": 0.0,
+      "seconds": 0.1,
       "output": ""
     },
     {
       "name": "h0_harness.py",
       "ok": true,
-      "seconds": 0.1,
+      "seconds": 0.4,
       "output": ""
     },
     {
       "name": "h0_observe_only_env.py",
       "ok": true,
-      "seconds": 0.3,
+      "seconds": 1.3,
       "output": ""
     },
     {
       "name": "m2_mac_input.py",
       "ok": true,
-      "seconds": 0.0,
+      "seconds": 0.2,
       "output": ""
     },
     {
       "name": "m2_retina.py",
       "ok": true,
-      "seconds": 0.1,
+      "seconds": 1.2,
       "output": ""
     },
     {
       "name": "m3_mac_setup.py",
       "ok": true,
-      "seconds": 0.1,
+      "seconds": 0.8,
       "output": ""
     },
     {
       "name": "m4_packaging.py",
       "ok": true,
-      "seconds": 0.4,
+      "seconds": 1.9,
       "output": ""
     },
     {
       "name": "w_tickloop_backend.py",
       "ok": true,
-      "seconds": 0.2,
+      "seconds": 1.3,
       "output": ""
     },
     {
@@ -70,12 +70,36 @@
   ],
   "pytest": {
     "ok": false,
-    "total": 1,
+    "total": 533,
     "failed": [
-      ".py::tests.test_integrations_lan_dashboard"
+      "tests/test_gui_pages.py::test_main_window_builds_all_six_pages",
+      "tests/test_gui_smoke.py::test_main_window_builds_themed_shell",
+      "tests/test_hotkeys.py::test_hotkeys_builds_pynput_mapping_and_skips_empty_bindings",
+      "tests/test_hotkeys.py::test_hotkeys_handler_exceptions_are_swallowed",
+      "tests/test_power.py::test_acquire_sets_continuous_system_and_display_flags",
+      "tests/test_power.py::test_acquire_without_display_flag",
+      "tests/test_power.py::test_context_manager_acquires_and_releases",
+      "tests/test_power.py::test_failed_acquire_reports_inactive",
+      "tests/test_power.py::test_release_restores_plain_continuous_and_clears_active",
+      "tests/test_power.py::test_release_without_prior_acquire_does_nothing",
+      "tests/test_window.py::test_ignores_browser_tab_titled_roblox",
+      "tests/test_window.py::test_pick_client_accepts_an_explicit_process_name_override",
+      "tests/test_window.py::test_picks_largest_restored_client_among_candidates"
     ],
     "unexpected": [
-      ".py::tests.test_integrations_lan_dashboard"
+      "tests/test_gui_pages.py::test_main_window_builds_all_six_pages",
+      "tests/test_gui_smoke.py::test_main_window_builds_themed_shell",
+      "tests/test_hotkeys.py::test_hotkeys_builds_pynput_mapping_and_skips_empty_bindings",
+      "tests/test_hotkeys.py::test_hotkeys_handler_exceptions_are_swallowed",
+      "tests/test_power.py::test_acquire_sets_continuous_system_and_display_flags",
+      "tests/test_power.py::test_acquire_without_display_flag",
+      "tests/test_power.py::test_context_manager_acquires_and_releases",
+      "tests/test_power.py::test_failed_acquire_reports_inactive",
+      "tests/test_power.py::test_release_restores_plain_continuous_and_clears_active",
+      "tests/test_power.py::test_release_without_prior_acquire_does_nothing",
+      "tests/test_window.py::test_ignores_browser_tab_titled_roblox",
+      "tests/test_window.py::test_pick_client_accepts_an_explicit_process_name_override",
+      "tests/test_window.py::test_picks_largest_restored_client_among_candidates"
     ],
     "now_passing": []
   }
