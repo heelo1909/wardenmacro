@@ -414,6 +414,7 @@ IDs: `M` Mac, `W` Windows/both, `L` live test, `H` harness, `B-NNN` bug, `R-n` r
 - [x] **M0-M4** — Mac port code and DMG release workflow. Ref: `warden-mac-handoff.md` §7 Phases 0–4.
 - [x] **H0** — Stage harness (CLAUDE.md, PRINCIPLES.md, smoke, hooks, verifier) and DMG as the only Mac launch path. Ref: user request 2026-10-29.
 - [ ] **M4U** — **(needs the user)** First Mac CI run. The user pushes `main` and creates the pre-release tag `v0.0.1-mactest`; Claude fixes whatever the "Mac release" log shows until the run is green and both DMGs are on the pre-release. Ref: `warden-mac-handoff.md` §5, §7 Phase 4.
+- [ ] **B-001** — Mac CI crashes on Qt teardown after the Mac port tests pass (no DMG). Ref: `docs/bugs/BUG-001-mac-ci-qt-teardown-crash.md`, M4U.
 - [ ] **M5a** — **(needs the user)** Real-Mac checklist steps 1–4 (install from DMG, permissions, Roblox window found, capture has no title bar and right colors). Ref: `warden-mac-handoff.md` §7 Phase 5.
 - [ ] **M5b** — **(needs the user)** Real-Mac checklist steps 5–10 (clicks land, loadout, hotkeys, reconnect, stop, stays awake). Ref: same.
 - [ ] **M5c** — Fix what M5a/M5b found (one `B-NNN` stage per bug), then the user tags the first normal release `v0.2.0`. Ref: same, §8 risks.
